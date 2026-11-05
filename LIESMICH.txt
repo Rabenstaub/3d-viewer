@@ -1,0 +1,260 @@
+3D Viewer 3.2
+=============
+
+Dateien:   S3D_Viewer.pyw (Programm) + s3d_core.py (Geometrie-Kern) – beide im selben Ordner lassen
+Starten:   S3D_Viewer.pyw doppelklicken (fehlende Pakete werden angeboten)
+EXE bauen: build.bat
+
+Neu in 3.2
+----------
+  Maßliste: neue Spalten „ab links“ und „ab rechts“ – Abstand von der Stirnfläche am kleinsten bzw.
+  größten Z, so wie Zeichnungen meist bemaßt sind (bei Bereichen „von … bis“). Unabhängig vom Nullpunkt.
+
+Neu in 3.1
+----------
+  Kontur für jede Maschine (Drehteil → Kontur):
+  - Steuerung wählen: ISO/DIN (Fanuc, Mazak EIA, DMG MORI mit Fanuc/MAPPS, DIN PLUS – Bogen mit R)
+    oder Siemens Sinumerik 840D (Bogen mit CR=).
+  - „X als Radius“ für Steuerungen mit Radiusprogrammierung.
+  - „Werkzeug vor der Drehmitte“ tauscht G2/G3 (Standard: hinter der Drehmitte, Schrägbett).
+  - Neu: „Als G-Code speichern“ – reines Konturprogramm G0/G1/G2/G3 (nur Geometrie, ASCII, CRLF).
+  Einstellungen werden gemerkt.
+
+Neu in 3.0
+----------
+  Neuer Reiter „Drehteil“ (rechts):
+  - Maßliste: alle Durchmesser (Z von/bis, Länge, außen/innen), Planflächen (Z, Ø-Bereich),
+    Fasen/Kegel (Winkel, Z, Ø), Radien (R, Mittelpunkt Z und X als Ø). Filter, CSV-Export.
+  - Kontur: Außen- und Innenkontur als Elementliste in Fertigungsreihenfolge – Start, Gerade,
+    Plan, Fase/Kegel, Radius mit Endpunkt (Z, X als Ø), Mittelpunkt und Drehsinn (G2/G3 bei Blick
+    Z nach rechts, X nach oben). „umkehren“ dreht die Reihenfolge, „im Bild“ zeigt die Kontur als Linie.
+    Export als CSV oder DXF (Halbschnitt: X-Achse = Z, Y-Achse = Radius; Layer AUSSEN, INNEN, ACHSE).
+  - Zeile anklicken = zugehörige Fläche wird im Bild markiert.
+  Alle Z-Werte beziehen sich auf den aktuellen Nullpunkt.
+  Nicht rundum laufende Flächen (Nuten, Schlüsselflächen, Querbohrungen) gehören nicht zur Kontur.
+
+Neu in 2.9.7
+------------
+  Knopf heißt jetzt „Eigenschaften / Hilfe“. Neuer erster Reiter „Hilfe“ mit allen Maus-,
+  Mausrad- und Tastenbefehlen (Tasten immer passend zur eigenen Tastenbelegung).
+  F1 öffnet die Hilfe direkt; auch im Rechtsklick-Menü.
+
+Neu in 2.9.6
+------------
+  Feiner zoomen: Umschalt + Mausrad (2,5 % je Raste statt 10 %). Bei eingeschaltetem Schnitt
+  verschiebt Umschalt + Mausrad weiterhin den Schnitt. Zoom-Schritt einstellbar unter
+  Eigenschaften → Steuerung → „Zoom je Mausrad-Raste (%)“ (Standard 10 %).
+
+Neu in 2.9.5
+------------
+  Messen mit Radien/Einstichen (Torusflächen):
+  - Einstich + Einstich: Abstand Mitte–Mitte (axial), Abstand zwischen den Radien, beide R und Ø
+  - Planfläche + Einstich: Abstand Fläche – Radiusmitte und Fläche – nächste Radiuskante
+  - Kreiskante + Einstich: axialer Abstand zur Radiusmitte
+  - Zylinder + Einstich: radialer Abstand Radiusmitte – Zylinder
+
+Neu in 2.9.4
+------------
+  Knopf „Zurücksetzen“ (Strg+R, oben neben Aktualisieren, auch im Rechtsklick-Menü):
+  alles wie frisch geladen – Darstellungsschalter, Schnitt, Drehsperre, Nullpunkt/C0°, Auswahl,
+  gelöschte Radien, Seitenfenster an ihrem Platz, Bedienoberfläche 100 %, Ansicht „Anfang“.
+  Farben und Tastenbelegung bleiben (die setzt Eigenschaften → „Auf Standardwerte zurücksetzen“ zurück).
+
+Neu in 2.9.3
+------------
+  Schnitt kippen jetzt mit Strg + Umschalt + Mausrad (feines Verschieben: Umschalt + Alt + Mausrad).
+  Größe der Bedienoberfläche: AltGr + Mausrad (überall im Fenster) oder Strg+Plus / Strg+Minus,
+  Strg+0 = 100 %. Feste Stufen 70–200 %, auch unter Eigenschaften → Allgemein.
+  Strg + Mausrad über den Seitenfenstern verändert die Schrift nicht mehr versehentlich.
+  Knöpfe sind kompakter: Tastenkürzel stehen im Tooltip (Maus kurz auf den Knopf halten).
+  Wieder auf den Knöpfen anzeigen: Eigenschaften → Allgemein → „Tastenkürzel auf den Knöpfen anzeigen“.
+  Alt + Mausrad dreht um die Mittelachse in 5°-Schritten.
+
+Neu in 2.9.2
+------------
+  Alt + Mausrad: Bauteil um seine Mittelachse drehen (5° je Raste, mit Strg 1°).
+  Die Achse bleibt dabei im Bild stehen, Zoom und Lage ändern sich nicht.
+
+Neu in 2.9.1
+------------
+  Schnittebene kippen: Strg + Pfeiltasten (1°, mit Umschalt 5°) oder Umschalt + Alt + Mausrad.
+  Hoch/Runter kippt um die waagrechte, Links/Rechts um die senkrechte Bildschirmachse.
+  Pfeiltasten ohne Strg verschieben den Schnitt wie bisher. Statuszeile zeigt den Kippwinkel.
+
+Neu in 2.9
+----------
+  Gewinde farbig (Strg+G, Knopf „Gewinde farbig“): In Gewindebohrungen ist der Bereich, in dem
+  das Gewinde sitzt, grün eingefärbt – mit scharfer Grenze an Gewindeanfang und -ende.
+  Orange dahinter = Kernloch ohne Gewinde (Überhang), dann die Bohrspitze.
+  Am besten im Schnitt (S) oder Transparent (G) ansehen. Farbe: Eigenschaften → Modell → Gewindebereich.
+
+Neu in 2.8
+----------
+  Neues Logo (Sechseck mit Würfel und Umlauf-Pfeil) als Programm-Symbol, im Startbild
+  und im Info-Fenster. Name jetzt „3D Viewer“, EXE: 3D_Viewer.exe. Logo-Dateien im Ordner logo\.
+
+Neu in 2.7
+----------
+  Für GitHub vorbereitet: README.md, MIT-Lizenz, .gitignore, Demo-Bauteil demo/Demo_Welle.s3d
+  (frei erfundene Welle mit Fasen, Radien, Kegel, Querbohrung und 6× M6-Gewinde).
+  Info-Fenster: „Freie Software (MIT-Lizenz)“.
+
+Neu in 2.6.2
+------------
+  Name vorerst „Viewer 3D“ (EXE: Viewer_3D.exe). Info-Fenster („i“ oben rechts): Version,
+  Besitzer und Entwickler Christian Diezinger, GitHub-Link github.com/Rabenstaub (anklickbar).
+
+Neu in 2.6.1
+------------
+  Kleiner „i“-Knopf oben rechts: Info-Fenster mit Version und Urheber.
+
+Neu in 2.6
+----------
+  Neues Design „Glas“: hell, Milchglas-Flächen, abgerundete Karten, blaue Akzente,
+  aktive Schalter blau hinterlegt, Hinweisfelder im Bild mit weichem Schatten.
+  Umschalten auf das bisherige Aussehen: Eigenschaften → Allgemein → Design „Klassisch“.
+  Auswahlfarbe bleibt Rot, Hervorheben beim Überfahren jetzt hellblau.
+
+Neu in 2.5.1
+------------
+  Neuer Name (Fenstertitel, Meldungen, EXE).
+  Die Programmdateien heißen weiter S3D_Viewer.pyw / s3d_core.py – Verknüpfungen bleiben gültig.
+
+Neu in 2.5
+----------
+  Gewindebohrungen: Gewinde- und Kernlochtiefe aus den CAD-Daten.
+  - Bohrung anklicken → Feld im Bild + Werte rechts: Gewinde, Steigung, Kernloch-Ø,
+    nutzbare Gewindetiefe (von … bis), Kernlochtiefe, Tiefe bis Bohrspitze, Kernloch-Überhang (mm und × P)
+  - Im Bild entlang der Bohrungsachse: orange = Gewinde, blau = Kernloch-Überhang, grau = Senkung/Spitze
+  - Alle Tiefen ab Bohrungseintritt (Oberfläche)
+  - Rechtsklick → Annotationen nach Typ → „Gewinde- und Kernlochtiefe anzeigen“: an allen Gewinden (Taste O)
+  - Bohrungstabelle: neue Spalten Gew.-Tiefe und Kernloch-T.
+
+Neu in 2.4.4
+------------
+  „Nullpunkt aus Auswahl“ mit einer Querbohrung fragt jetzt nach: Bohrung = C0° (Z bleibt Längsachse)
+  oder neuer Nullpunkt in der Bohrung. Statuszeile im Bohrbild listet alle Stirnbohrungs-Winkel.
+
+Neu in 2.4.3
+------------
+  C0° frei festlegen (Reiter Nullpunkt oder Rechtsklick-Menü):
+  - „C0° um 180° drehen“
+  - „C0° um Winkel drehen …“ (beliebiger Winkel, + = gegen den Uhrzeigersinn)
+  - „C0° auf Auswahl legen“: Bohrung, Kante oder Punkt anklicken → liegt danach auf 0°
+    (bei Querbohrungen zählt die Eintrittsseite, bei Stirnbohrungen die Bohrungsmitte)
+  Bohrbild, Bohrungstabelle und Winkelanzeigen rechnen sofort mit dem neuen C0°.
+
+Neu in 2.4.2
+------------
+  Gekrümmte Verschneidungskanten (z. B. Querbohrung im Mantel) lassen sich jetzt wie alle
+  anderen Kanten anfahren (rot beim Berühren) und anklicken – auch im Linien-Modus (Y).
+
+Neu in 2.4.1
+------------
+  Seitenfenster ein-/ausblenden: Knöpfe „Fenster links“ (Strg+1) und „Fenster rechts“ (Strg+2)
+  in der Werkzeugleiste und im Rechtsklick-Menü. Nach Schließen mit X einfach wieder einschalten.
+
+Neu in 2.4
+----------
+  Radius-Mittelpunkt für die Drehmaschine: Radius (Torusfläche) anklicken.
+  Angezeigt werden Radius R, Kreismittelpunkt Z (vom Nullpunkt) und X als Durchmesser,
+  dazu Anfangs- und Endpunkt des Bogens (Z / X-Ø) – rechts unter Auswahl/Messen und in der Statuszeile.
+  Im Bild: roter Bogen, Kreuz im Mittelpunkt und Radiuslinien zu beiden Bogenenden.
+  Der Mittelpunkt wird exakt über die tangentialen Nachbarflächen berechnet.
+
+Neu in 2.3.3
+------------
+  Bohrbild, Mantelbohrungen: kurzer Hinweisstrich mit Pfeil von der Bohrungsmitte nach außen
+  und Beschriftungsfeld (Winkel + Ø/Gewinde). Keine Linien mehr zur Achsmitte.
+  Beschriftungsfelder, die sich überdecken würden, werden automatisch versetzt.
+
+Neu in 2.3.2
+------------
+  Messstrich Achse ↔ Fläche sitzt jetzt immer auf Höhe der Flächenmitte (z. B. Bohrungsgrund),
+  auch wenn die gemessene Bohrung dort gar nicht mehr verläuft.
+
+Neu in 2.3.1
+------------
+  Messung Bohrung/Achse ↔ Fläche: Die Messlinie beginnt jetzt auf der Bohrungsachse auf Höhe
+  der gewählten Fläche. Die Mittellinie der Bohrung wird als Strich-Punkt-Linie angezeigt.
+
+Neu in 2.3
+----------
+  Radius/Fase löschen (scharfe Ecke): Übergangsradius oder Fase anklicken (wird rot),
+  Rechtsklick → „Radius löschen (scharfe Ecke)“ oder Taste Entf.
+  Der Radius wird ausgeblendet, die beiden angrenzenden Linien (Zylinder, Kegel/Winkel,
+  Planfläche) werden bis zur theoretischen scharfen Ecke verlängert.
+  An der Ecke erscheint ein roter Kreis mit Z-Wert und Ø (X) – anklickbar und messbar
+  wie jede andere Kante (z. B. Abstand zu einer Planfläche).
+  Mehrere Radien gleichzeitig: mit Strg+Klick auswählen, dann löschen.
+  Wiederherstellen: Rechtsklick → „Radien/Fasen wiederherstellen“ oder Shift+Entf.
+  Hinweis: Vollradien im Einstich (zwei parallele Flanken) haben keine scharfe Ecke.
+
+Neu in 2.2
+----------
+- Korrektur Bohrbild/Bohrungstabelle: Durchgangsbohrungen (z. B. Senkbohrungen in die Hauptbohrung)
+  werden jetzt auf der Seite der Senkung bzw. außen am Umfang angezeigt, nicht mehr gegenüber.
+
+Neu in 2.1
+----------
+- Rechteckselektion: Alt + linke Maustaste Rahmen aufziehen (Strg dazu = zur Auswahl hinzufügen)
+  oder Kontextmenü → Rechteckselektion. Filter: Flächen, Flächentyp (Ebenen, Konus,
+  konvexe/konkave Zylinder, Torus, Freiform), Kanten, Annotationen, verdeckte Elemente.
+- Ansichtssystem CAD / CLASSMATE (Kontextmenü → Ansicht): Standardansichten beziehen sich auf das
+  gewählte System. CLASSMATE nutzt die in der .s3d gespeicherte Ausrichtung (Standard).
+- Vorschaubilder anzeigen (Kontextmenü): gespeicherte Ansichten der Datei aufrufen
+- Detailansichten-Baum (Strg+E): Liste der Ansichten, eigene Ansichten speichern, Mosaikansicht
+- Mosaikansicht: Vorne / Oben / Links / Isometrisch nebeneinander
+- Annotationen nach Typ: Gewinde ein/aus, nur Annotationen der gewählten Flächen
+
+Neu in 2.0 – Bedienung wie gängige CAD-Viewer
+------------------------------------------
+Tasten (alle änderbar unter Eigenschaften → Tastenbelegung):
+  Q  Tesselierung anzeigen          G  Transparente Darstellung       Y  Drahtdarstellung
+  H  Modellfarben ignorieren        X  Zeichen-Box                    K  Koordinatensystem
+  C  Konturen                       Z  Z-Rotation (Achse sperren)     O  Annotationen (Gewinde)
+  S  Schnittebene                   P  Perspektivische Projektion     M  Modellbaum
+  E  Modellinformationen            F5 Aktualisieren (Datei neu laden)
+  Ansichten: L Links, R Rechts, T Oben, D Unten, F Vorne, B Rückseite, I Isometrisch,
+             N Normal auf (gewählte Fläche/Achse), W Fenstergröße, Leertaste Anfang
+  A  Animation starten,  Esc Animation anhalten (bzw. Auswahl löschen)
+  Entf  Radius/Fase löschen (scharfe Ecke),  Shift+Entf  wiederherstellen
+  Eigene Zusatzfunktionen: Strg+B Bohrbild, Umschalt+S Schnittseite wechseln,
+             Umschalt+Y verdeckte Linien im Drahtmodus, Strg+O Öffnen
+
+Maus:
+  Linke Maustaste            Rotation (Strg = feiner)
+  Rechte Maustaste           Translation (Bauteil klebt am Zeiger)
+  Mittlere Maustaste         Zoom entlang der Vertikalen (Strg = aus der Mitte)
+  Mausrad                    Zoom zur Mitte,  Strg+Mausrad = Zoom zum Mauszeiger
+  Umschalt+Mausrad           Schnittebene verschieben (Strg+Umschalt = fein), auch Pfeiltasten
+  Umschalt+linke Maustaste   Schnittebene drehen
+  Umschalt+rechte Maustaste  Schnittebene verschieben
+  Rechtsklick (ohne Ziehen)  Kontextmenü: Drehmittelpunkt setzen/zurücksetzen, Viewermodus
+                             (Messen / Navigieren), Ansicht, alle Darstellungsfunktionen, Eigenschaften
+  Doppelklick                Drehmittelpunkt auf die Stelle setzen
+
+Dynamisches Hervorheben: Fläche, Kante oder Eckpunkt unter der Maus wird hervorgehoben
+(Statusleiste zeigt Typ und Ø). Auswahl rot, Messwerte als Tooltip-Kasten am Modell.
+Hintergrund mit Farbverlauf.
+
+Eigenschaften (Knopf "Eigenschaften" oder Kontextmenü):
+  Allgemein:  Hintergrundfarben, Schriftgröße, Text- und Tooltip-Farben, Eckenradius
+  Modell:     Linienbreiten, Konturfarbe, Farben für Hervorheben/Auswahl/Bemaßung
+  Steuerung:  Übersicht der Maussteuerung, Mausrad-Richtung umkehren
+  Tastenbelegung: jede Funktion frei belegbar, Rücksetzen auf Standard
+
+Weitere Funktionen (wie bisher)
+-------------------------------
+- Messen: zwei Flächen/Kanten/Eckpunkte nacheinander anklicken (Strg+Klick für mehr als zwei)
+  Wandstärke, Fasenwinkel, Lochkreis + Winkel, Abstand, Achsabstand, Ø, Radius
+- Nullpunkt-Tab: Drehmaschinen-KS (Z = Länge), Nullpunkt aus Auswahl (Lochkreismitte usw.)
+- Bohrungen-Tab: Bohrungstabelle mit Winkel, CSV-Export
+- Bohrbild (Strg+B): Lochkreise und Winkel außerhalb des Bauteils
+- Transparent (G): Kanäle farbig markieren
+- Draht (Y): nur sichtbare Linien + Umrisse, Linien/Eckpunkte fangen
+- Qualität: Grob/Mittel/Fein/Sehr fein (glatte Oberflächen)
+
+Hinweis: Diese .s3d-Exporte enthalten keine Toleranz-/Oberflächen-Annotationen und keine
+Vorschaubilder als Grafik; angezeigt werden deshalb die Gewinde aus den Features, und
+"Vorschaubilder" springt zu den gespeicherten Ansichten.

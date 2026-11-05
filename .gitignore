@@ -1,0 +1,16 @@
+# Firmendaten niemals hochladen: alle .s3d-Dateien ausser der Demo
+*.s3d
+!demo/Demo_Welle.s3d
+
+# Laufzeit / Build
+__pycache__/
+*.pyc
+*_fehler.log
+*.log
+build/
+dist/
+*.spec
+*.zip
+icon/
+version_info.txt
+.venv_build/

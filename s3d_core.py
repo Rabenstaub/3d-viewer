@@ -1684,6 +1684,26 @@ def entry_info(model, h, wcs):
             "wcs": pw, "tool": wcs.dir_to_wcs(tool)}
 
 
+def entry_surface(model, h):
+    """Fläche, auf der der Bohrungseintritt liegt: (Flächenindex, Normale) oder (None, None)."""
+    p = np.asarray(h.entry, float)
+    R = max(h.diameters) / 2 if h.diameters else model.size * 0.01
+    best = None
+    for j, f in enumerate(model.faces):
+        if j in h.faces or f.surf is None:
+            continue
+        V = f.triangles.reshape(-1, 3)
+        if np.linalg.norm(V - p, axis=1).min() > 3 * R:
+            continue
+        q = f.surf.project(p[None, :])[0]
+        dist = float(np.linalg.norm(q - p))
+        if best is None or dist < best[0]:
+            best = (dist, j, f.surf.normals(q[None, :])[0])
+    if best is None or best[0] > max(1e-3, R * 1e-2):
+        return None, None
+    return best[1], best[2]
+
+
 def pitch_text(angles):
     if len(angles) < 2:
         return ""

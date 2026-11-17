@@ -3907,6 +3907,43 @@ class MainWindow(QtWidgets.QMainWindow):
             out["ends"] = sorted(ends, key=lambda t: -t[0])
         return out
 
+    def _show_entry_overlay(self, i):
+        """Eintrittspunkt: Bohrungsachse und Flankenlinie der Fläche (im Längsschnitt) durch den Punkt –
+        beide schneiden sich genau im roten Punkt auf der Fläche."""
+        m = self.model
+        h = self.holes[i]
+        p = np.asarray(h.entry, float)
+        ax = core.unit(h.axis_d)                 # zeigt aus dem Bauteil heraus
+        R = max(h.diameters) / 2 if h.diameters else m.size * 0.01
+        Lout = max(R * 6, m.size * 0.08)
+        segs_axis = [p + Lout * ax, p - max(h.depth, R) * ax]
+        items = []
+        fi, n = core.entry_surface(m, h)
+        if n is not None:
+            mo, md = core.main_axis(m)
+            q = p - mo
+            u = q - (q @ md) * md
+            u = core.unit(u) if np.linalg.norm(u) > 1e-9 else core.any_perp(md)
+            # Flankenlinie: Schnitt der Tangentialebene mit dem Längsschnitt (Ebene aus Längsachse und Radial)
+            t = np.cross(n, np.cross(md, u))
+            if np.linalg.norm(t) > 1e-9:
+                t = core.unit(t)
+                Lf = max(R * 5, m.size * 0.06)
+                fl = gl.GLLinePlotItem(pos=np.array([p - Lf * t, p + Lf * t]), mode="lines",
+                                       color=(0.85, 0.45, 0.0, 1.0), width=2.2, antialias=True, glOptions=GL_ONTOP)
+                fl.setDepthValue(20)
+                items.append(fl)
+        al = gl.GLLinePlotItem(pos=np.array(segs_axis), mode="lines", color=(0.10, 0.30, 0.75, 1.0), width=2.0,
+                               antialias=True, glOptions=GL_ONTOP)
+        al.setDepthValue(20)
+        dot = gl.GLScatterPlotItem(pos=np.array([p]), size=13, color=(0.86, 0.05, 0.05, 1.0), pxMode=True,
+                                   glOptions=GL_ONTOP)
+        dot.setDepthValue(22)
+        items += [al, dot]
+        for it in items:
+            self.view.addItem(it)
+        self.items_overlay = list(self.items_overlay) + items
+
     def _show_arc_overlay(self, fi):
         ap = self._arc_info(fi)
         if ap is None:
@@ -3972,6 +4009,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 pw = self.wcs.to_wcs(e.point)
                 ei = self._entry_at(e.point)
                 if ei is not None:
+                    self._show_entry_overlay(ei)
                     self.sel_callouts = [self._callout(e.point, self._entry_text(ei)[0],
                                                        bg=self._qc("#fffff0f0"), fg=self._qc("#ffb00020"))]
                 else:

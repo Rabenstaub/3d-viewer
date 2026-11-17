@@ -1698,8 +1698,16 @@ def entry_info(model, h, wcs):
     depth_x0 = xr / down if down > 1e-6 else None
     d_nom = min(h.diameters) if h.diameters else 0.0
     tip_len = d_nom / 2 / math.tan(math.radians(59)) if d_nom else 0.0     # Spiralbohrer 118°
-    return {"point": p, "dia": 2 * xr, "y": y, "z": float(pw[2]), "c": c, "b": b,
-            "wcs": pw, "tool": wcs.dir_to_wcs(tool), "depth_x0": depth_x0, "tip118": tip_len}
+    # Anschnitt: Winkel zwischen Bohrer und Fläche am Eintritt (90° = senkrecht)
+    hit = None
+    try:
+        _, n = entry_surface(model, h)
+        if n is not None:
+            hit = 90.0 - math.degrees(math.acos(max(-1.0, min(1.0, abs(float(tool @ unit(n)))))))
+    except Exception:
+        hit = None
+    return {"point": p, "dia": 2 * xr, "y": y, "z": float(pw[2]), "c": c, "b": b, "b_top": 90.0 - b,
+            "wcs": pw, "tool": wcs.dir_to_wcs(tool), "depth_x0": depth_x0, "tip118": tip_len, "hit": hit}
 
 
 def hole_details(model, h):

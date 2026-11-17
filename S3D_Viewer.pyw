@@ -1470,7 +1470,8 @@ class MainWindow(QtWidgets.QMainWindow):
         hl.setContentsMargins(2, 2, 2, 2)
         self.hole_table = InfoTable(["Nr", "Ø", "Gewinde", "Gew.-Tiefe", "Kernloch-T.", "X", "Y", "Z", "I", "J", "K",
                                      "Tiefe", "Art", "Winkel°", "Abst. Mitte",
-                                     "Masch. X Ø", "Masch. Y", "Masch. Z", "C°", "B°", "Tiefe bis X0", "Senkung/Stufe", "Spitze",
+                                     "Masch. X Ø", "Masch. Y", "Masch. Z", "C°", "B° von oben", "B° zur Achse",
+                                     "Anschnitt°", "Tiefe bis X0", "Senkung/Stufe", "Spitze",
                                      "Tiefe voller Ø", "Feature"])
         self.hole_table.itemSelectionChanged.connect(self.on_hole_row)
         self.hole_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -2893,11 +2894,19 @@ class MainWindow(QtWidgets.QMainWindow):
         t = ei["tool"]
         ytxt = f"Y {fmt(ei['y'])}\n" if abs(ei["y"]) > 1e-4 else ""
         x0txt = f"\nTiefe bis X0 {fmt(ei['depth_x0'])}" if ei["depth_x0"] is not None else ""
-        short = (f"Eintritt {dtxt}\nX {fmt(ei['dia'])}  (Ø)\n{ytxt}Z {fmt(ei['z'])}\n"
-                 f"C {fmt(ei['c'], 3)}°   B {fmt(ei['b'], 3)}°{x0txt}")
+        hit = ei.get("hit")
+        if hit is None:
+            htxt = ""
+        elif abs(90 - hit) < 0.5:
+            htxt = "\nBohrer senkrecht zur Fläche"
+        else:
+            htxt = f"\nAnschnitt {fmt(hit, 1)}° ({fmt(90 - hit, 1)}° schräg)"
+        short = (f"Eintritt {dtxt}\nX {fmt(ei['dia'])}  (Ø)\n{ytxt}Z {fmt(ei['z'])}\nC {fmt(ei['c'], 3)}°\n"
+                 f"B {fmt(ei['b_top'], 3)}° von oben  (= {fmt(ei['b'], 3)}° zur Achse){x0txt}{htxt}")
         long = (f"Bohrungseintritt {dtxt} ({', '.join(h.features)}):  X {fmt(ei['dia'])} (Ø, r {fmt(ei['dia'] / 2)})"
                 + (f"  Y {fmt(ei['y'])} (außermittig)" if abs(ei["y"]) > 1e-4 else "") +
-                f"  Z {fmt(ei['z'])}  C {fmt(ei['c'], 3)}°  B {fmt(ei['b'], 3)}° zur Längsachse   ·   "
+                f"  Z {fmt(ei['z'])}  C {fmt(ei['c'], 3)}°  B {fmt(ei['b_top'], 3)}° von oben (radial = 0°) bzw. "
+                f"{fmt(ei['b'], 3)}° zur Längsachse   ·   "
                 f"Punkt X {fmt(ei['wcs'][0])} Y {fmt(ei['wcs'][1])} Z {fmt(ei['wcs'][2])}   ·   "
                 f"Werkzeugrichtung ({fmt(t[0], 4)}, {fmt(t[1], 4)}, {fmt(t[2], 4)})   ·   Tiefe {fmt(h.depth)}"
                 + (f"   ·   Spitze bis Mitte X0: {fmt(ei['depth_x0'])} (volle Schneide +{fmt(ei['tip118'])} "
@@ -4661,11 +4670,12 @@ class MainWindow(QtWidgets.QMainWindow):
             ei = core.entry_info(self.model, h, self.wcs)
             hd = core.hole_details(self.model, h)
         except Exception:
-            return ("",) * 9
+            return ("",) * 11
         sk = "; ".join(f"{a} Ø{fmt(d)}" + (f" {fmt(w, 3)}°" if w else "") + f" T {fmt(t)}"
                        for a, d, w, t in hd["sinks"])
         tip = f"{fmt(hd['tip'][0], 3)}° L {fmt(hd['tip'][1])}" if hd["tip"] else ("durch" if h.through else "flach")
-        return (fmt(ei["dia"]), fmt(ei["y"]), fmt(ei["z"]), fmt(ei["c"], 3), fmt(ei["b"], 3),
+        return (fmt(ei["dia"]), fmt(ei["y"]), fmt(ei["z"]), fmt(ei["c"], 3), fmt(ei["b_top"], 3), fmt(ei["b"], 3),
+                fmt(ei["hit"], 1) if ei.get("hit") is not None else "",
                 fmt(ei["depth_x0"]) if ei["depth_x0"] is not None else "", sk, tip,
                 fmt(hd["full"]))
 

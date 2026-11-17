@@ -1578,6 +1578,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.model:
             QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             self._build_scene()
+            self._build_annotations()
             self._refresh_selection()
             self._show_contour_overlay()
             QtWidgets.QApplication.restoreOverrideCursor()
@@ -2552,6 +2553,7 @@ class MainWindow(QtWidgets.QMainWindow):
             try:
                 self._prepare_edges()
                 self._build_scene()
+                self._build_annotations()
                 self.sel = [core.Entity(self.model, "edge", new[-1])]
                 self._refresh_selection()
             finally:
@@ -2570,6 +2572,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._prepare_edges()
             self._build_scene()
+            self._build_annotations()
             self._refresh_selection()
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()

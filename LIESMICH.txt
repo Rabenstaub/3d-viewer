@@ -13,6 +13,14 @@ Neu in 3.2.2
   Schrägbohrungen: Eintrittspunkt liegt jetzt exakt auf der Fläche (Achse ∩ Ebene) statt an der
   Ellipsenspitze; das Bohrbild zeigt sie mit Winkel am Umfang und Neigung (∠45°).
 
+  Rote Eintrittspunkte: Bei schrägen und radialen Bohrungen sitzt ein roter Punkt dort, wo die
+  Bohrungsachse auf die Fläche trifft (auch auf Kegel, Mantel oder Radius). Anklicken zeigt
+  X (Ø), Z, C-Winkel und B-Winkel (Neigung zur Längsachse) – die Werte für den Bohrzyklus.
+  Ein-/Ausblenden: Annotationen (O) bzw. Rechtsklick → Annotationen nach Typ → Eintrittspunkte.
+  Neues Demo-Teil demo\Demo_Indexbolzen.s3d: Spitze R5 → 30° → 15° → Ø20, Bohrung Ø5 von hinten,
+  4× Ø3 unter 45° (je 90°) vom 30°-Kegel in die Bohrung. Kugelflächen (SPHERE) werden jetzt
+  wie Radien behandelt (Radius-Anzeige, Mittelpunkt, Drehkontur).
+
 Neu in 3.2
 ----------
   Maßliste: neue Spalten „ab links“ und „ab rechts“ – Abstand von der Stirnfläche am kleinsten bzw.

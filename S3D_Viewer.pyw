@@ -1090,7 +1090,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view_frame_name = self.settings.value("view_frame", "CLASSMATE")
         self.user_views = []
         self.rect_filter = dict(self.RECT_FILTER_DEFAULTS)
-        self.annot_types = {"Gewinde": True, "only_selected": False}
+        self.annot_types = {"Gewinde": True, "Eintritt": True, "only_selected": False}
         self.view = Viewport()
         try:
             _ic = QtWidgets.QApplication.instance().windowIcon()
@@ -1609,6 +1609,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 k = tuple(np.round(p, 4))
                 vmap.setdefault(k, [p, set()])[1].add(e.id)
         self.vertices = np.array([v[0] for v in vmap.values() if len(v[1]) >= 2]) if vmap else np.zeros((0, 3))
+        # Bohrungs-Eintrittspunkte (Achse ∩ Fläche) schräger und radialer Bohrungen – anklickbar
+        self.entry_pts = []
+        if self.model is not None and self.holes:
+            mo, md = core.main_axis(self.model)
+            for i, h in enumerate(self.holes):
+                if abs(float(core.unit(h.axis_d) @ md)) < 0.9999:
+                    self.entry_pts.append((np.asarray(h.entry, float), i))
+        if self.entry_pts:
+            self.vertices = np.vstack([self.vertices.reshape(-1, 3)] + [p[None, :] for p, _ in self.entry_pts])
 
     def _freeform_edges_from_mesh(self, V, T, F):
         """Freiform-Kanten (z. B. Verschneidung Querbohrung/Mantel) haben in der Datei keine Punkte.
@@ -1994,7 +2003,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if a.isChecked() != on:
                 a.trigger() if self.model is not None else a.setChecked(on)
         self.settings.setValue("thread_color_on", True)
-        self.annot_types = {"Gewinde": True, "only_selected": False}
+        self.annot_types = {"Gewinde": True, "Eintritt": True, "only_selected": False}
         self.nav_mode = False
         self.show_hidden = False
         self.settings.setValue("show_hidden", 0)
@@ -2398,10 +2407,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _fillet_targets(self, pos=None):
         if self.model is None:
             return []
-        t = [e.ref for e in self.sel if e.kind == "face" and self.model.faces[e.ref].ftype in ("TORUS", "CONE")]
+        t = [e.ref for e in self.sel if e.kind == "face" and self.model.faces[e.ref].ftype in ("TORUS", "SPHERE", "CONE")]
         if not t and pos is not None:
             h = self._pick_face(pos)
-            if h is not None and self.model.faces[h[0]].ftype in ("TORUS", "CONE"):
+            if h is not None and self.model.faces[h[0]].ftype in ("TORUS", "SPHERE", "CONE"):
                 t = [h[0]]
         return t
 
@@ -2645,7 +2654,8 @@ class MainWindow(QtWidgets.QMainWindow):
         anm = m.addMenu("Annotationen nach Typ anzeigen")
         for key, text in (("only_selected", "Nur Annotationen der gewählten Flächen anzeigen"),
                           ("Gewinde", "Gewinde anzeigen"),
-                          ("Gewindetiefe", "Gewinde- und Kernlochtiefe anzeigen")):
+                          ("Gewindetiefe", "Gewinde- und Kernlochtiefe anzeigen"),
+                          ("Eintritt", "Eintrittspunkte schräger/radialer Bohrungen (rot)")):
             aa = anm.addAction(text)
             aa.setCheckable(True)
             aa.setChecked(self.annot_types.get(key, False))
@@ -2706,7 +2716,36 @@ class MainWindow(QtWidgets.QMainWindow):
                                        width=1.2, antialias=True, glOptions=GL_EDGES)
                 self.view.addItem(it)
                 self.annot_items.append(it)
+            pts = [p for p, i in getattr(self, "entry_pts", [])
+                   if self.annot_types.get("Eintritt", True) and (
+                       not self.annot_types.get("only_selected", False)
+                       or bool({e.ref for e in self.sel if e.kind == "face"} & set(self.holes[i].faces)))]
+            if pts:
+                it = gl.GLScatterPlotItem(pos=np.array(pts), size=10, color=(0.86, 0.05, 0.05, 1.0), pxMode=True)
+                it.setGLOptions(GL_ONTOP if self.a_glass.isChecked() else GL_EDGES)
+                self.view.addItem(it)
+                self.annot_items.append(it)
         self._sync_callouts()
+
+    def _entry_at(self, p, tol=1e-4):
+        """Bohrungsindex, falls p ein Eintrittspunkt ist."""
+        for q, i in getattr(self, "entry_pts", []):
+            if np.linalg.norm(q - np.asarray(p, float)) < tol:
+                return i
+        return None
+
+    def _entry_text(self, i):
+        h = self.holes[i]
+        ei = core.entry_info(self.model, h, self.wcs)
+        dtxt = h.thread if h.thread else "Ø" + "/".join(fmt(x) for x in h.diameters)
+        t = ei["tool"]
+        short = (f"Eintritt {dtxt}\nX {fmt(ei['dia'])}  (Ø)\nZ {fmt(ei['z'])}\n"
+                 f"C {fmt(ei['c'], 3)}°   B {fmt(ei['b'], 3)}°")
+        long = (f"Bohrungseintritt {dtxt} ({', '.join(h.features)}):  X {fmt(ei['dia'])} (Ø, r {fmt(ei['dia'] / 2)})"
+                f"  Z {fmt(ei['z'])}  C {fmt(ei['c'], 3)}°  B {fmt(ei['b'], 3)}° zur Längsachse   ·   "
+                f"Punkt X {fmt(ei['wcs'][0])} Y {fmt(ei['wcs'][1])} Z {fmt(ei['wcs'][2])}   ·   "
+                f"Werkzeugrichtung ({fmt(t[0], 4)}, {fmt(t[1], 4)}, {fmt(t[2], 4)})   ·   Tiefe {fmt(h.depth)}")
+        return short, long
 
     # ---------------- Ansichtssystem (CAD / CLASSMATE) und gespeicherte Ansichten ----------------
     def _view_frame(self):
@@ -3522,7 +3561,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 ent = core.Entity(self.model, "point", None, point=vh)
                 ent.is_vertex = True
                 pw = self.wcs.to_wcs(vh)
-                self.status.showMessage(f"Eckpunkt:  X {fmt(pw[0])}   Y {fmt(pw[1])}   Z {fmt(pw[2])}")
+                ei = self._entry_at(vh)
+                self.status.showMessage(self._entry_text(ei)[1] if ei is not None else
+                                        f"Eckpunkt:  X {fmt(pw[0])}   Y {fmt(pw[1])}   Z {fmt(pw[2])}")
             else:
                 ent = core.Entity(self.model, "edge", eh[0])
             keys = [e.key() for e in self.sel]
@@ -3561,7 +3602,9 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             ent = None
         if vh is not None:
-            self.status.showMessage(f"Eckpunkt:  X {fmt(pw[0])}   Y {fmt(pw[1])}   Z {fmt(pw[2])}")
+            ei = self._entry_at(vh)
+            self.status.showMessage(self._entry_text(ei)[1] if ei is not None else
+                                    f"Eckpunkt:  X {fmt(pw[0])}   Y {fmt(pw[1])}   Z {fmt(pw[2])}")
         elif fh is not None:
             pw = self.wcs.to_wcs(fh[1])
             self.status.showMessage(f"Punkt (Nullpunkt-KS): X {fmt(pw[0])}  Y {fmt(pw[1])}  Z {fmt(pw[2])}")
@@ -3927,7 +3970,12 @@ class MainWindow(QtWidgets.QMainWindow):
             e = self.sel[0]
             if e.kind == "point":
                 pw = self.wcs.to_wcs(e.point)
-                self.sel_callouts = [self._callout(e.point, f"X {fmt(pw[0])}\nY {fmt(pw[1])}\nZ {fmt(pw[2])}")]
+                ei = self._entry_at(e.point)
+                if ei is not None:
+                    self.sel_callouts = [self._callout(e.point, self._entry_text(ei)[0],
+                                                       bg=self._qc("#fffff0f0"), fg=self._qc("#ffb00020"))]
+                else:
+                    self.sel_callouts = [self._callout(e.point, f"X {fmt(pw[0])}\nY {fmt(pw[1])}\nZ {fmt(pw[2])}")]
                 self._sync_callouts()
             elif e.kind == "edge" and str(e.ref).startswith("Ecke-"):
                 ed = e.edge
@@ -3941,7 +3989,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                         f"Punkt X {fmt(pw[0])} Y {fmt(pw[1])} Z {fmt(pw[2])}")
             elif self._thread_for_entity(e) is not None:
                 self._show_thread_overlay(self._thread_for_entity(e))
-            elif e.kind == "face" and e.face.ftype == "TORUS" and self._arc_info(e.ref) is not None:
+            elif e.kind == "face" and e.face.ftype in ("TORUS", "SPHERE") and self._arc_info(e.ref) is not None:
                 self._show_arc_overlay(e.ref)
             else:
                 dia = e.diameter()

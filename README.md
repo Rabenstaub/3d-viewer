@@ -90,4 +90,6 @@ immer mit der gültigen Zeichnung abgleichen.
 Die Demo-Datei `demo/Demo_Welle.s3d` ist frei erfunden und darf beliebig verwendet werden
 (Drehkontur mit Fasen/Radien/Kegel, 6× M6, Querbohrung, Passfedernut, Schlüsselfläche,
 Schrägbohrungen 45°). Erzeugt wird sie mit `demo/generator/make_demo.py`.
+`demo/Demo_Indexbolzen.s3d` (Spitze R5 / 30° / 15°, 4× Ø3 unter 45° in Bohrung Ø5) zeigt die
+roten Bohrungs-Eintrittspunkte; Erzeuger: `demo/generator/make_indexbolzen.py`.
 Das Logo liegt im Ordner `logo/` (SVG, PNG, ICO).

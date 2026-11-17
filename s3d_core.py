@@ -177,7 +177,7 @@ def fit_surface(face, axis, size):
         if s[2] / math.sqrt(len(V)) > tol:
             return None
         return PlaneSurf(c, n)
-    if axis is None or face.ftype not in ("CYLINDER", "CONE", "TORUS"):
+    if axis is None or face.ftype not in ("CYLINDER", "CONE", "TORUS", "SPHERE"):
         return None
     o, d = axis
     d = unit(d)
@@ -214,7 +214,7 @@ def fit_surface(face, axis, size):
         if face.angle is not None and abs(face.angle - half) < 2.0:
             half = face.angle            # exakter Wert aus dem CAD
         return RevSurf("CONE", o, d, "line", p0=p0, t=t, half_angle=half)
-    if face.ftype == "TORUS":
+    if face.ftype in ("TORUS", "SPHERE"):
         keep = np.ones(len(a), bool)
         for _ in range(3):
             c, r, _ = _fit_circle_2d(a[keep], rho[keep])
@@ -844,7 +844,7 @@ def _plane_of(e):
 def _torus_measure(e1, e2, wcs):
     """Radien/Einstiche (Torus): axiale Abstände über den Radius-Mittelpunkt."""
     def tor(e):
-        if e.kind == "face" and e.face.ftype == "TORUS" and isinstance(e.face.surf, RevSurf):
+        if e.kind == "face" and e.face.ftype in ("TORUS", "SPHERE") and isinstance(e.face.surf, RevSurf):
             try:
                 return arc_profile(e.model, e.ref)
             except Exception:
@@ -1348,13 +1348,56 @@ class Hole:
     thread_face: int = -1
 
 
-def _planar_end(model, faces, o, d, lo, hi):
-    """Schräg angeschnittene Bohrungsenden: liegt die Randkurve eines Endes in einer Ebene
-    (z. B. Schrägbohrung in eine Planfläche), wird der Durchstoßpunkt der Achse durch diese
-    Ebene zurückgegeben statt der Spitze der Ellipse. Ergebnis (lo, hi)."""
+def _vertex_faces(model):
+    """Zuordnung gerundeter Netzpunkt -> Flächenindizes (einmal je Modell)."""
+    vf = getattr(model, "_vertex_faces", None)
+    if vf is None:
+        vf = {}
+        for j, f in enumerate(model.faces):
+            for k in map(tuple, np.round(f.triangles.reshape(-1, 3), 4)):
+                vf.setdefault(k, set()).add(j)
+        model._vertex_faces = vf
+    return vf
+
+
+def _line_surface_root(surf, o, d, t0, t1, n=64):
+    """Schnitt der Geraden o + t·d mit einer analytischen Fläche im Bereich [t0, t1];
+    liefert die Nullstelle, die (t0 + t1) / 2 am nächsten liegt, oder None."""
+    t = np.linspace(t0, t1, n + 1)
+    P = o + np.outer(t, d)
+
+    def g(P):
+        Q = surf.project(P)
+        return np.einsum("ij,ij->i", P - Q, surf.normals(Q))
+    f = g(P)
+    roots = []
+    for i in range(n):
+        if f[i] == 0.0:
+            roots.append(t[i])
+        elif f[i] * f[i + 1] < 0:
+            a, b, fa = t[i], t[i + 1], f[i]
+            for _ in range(60):
+                m = 0.5 * (a + b)
+                fm = g((o + m * d)[None, :])[0]
+                if fa * fm <= 0:
+                    b = m
+                else:
+                    a, fa = m, fm
+            roots.append(0.5 * (a + b))
+    if not roots:
+        return None
+    mid = 0.5 * (t0 + t1)
+    return float(min(roots, key=lambda r: abs(r - mid)))
+
+
+def _axis_surface_end(model, faces, o, d, lo, hi):
+    """Durchstoßpunkt der Bohrungsachse durch die angrenzende Fläche (Eintritt/Austritt).
+    Bei schräg angeschnittenen Bohrungen (Planfläche, Kegel, Mantel, Radius) liegt der Rand der
+    Bohrung nicht senkrecht zur Achse; der Bohrer trifft die Fläche mit der Achse dort, wo die
+    (gedachte, durchgehende) Nachbarfläche die Achse schneidet. Ergebnis (lo, hi)."""
     tris = np.concatenate([model.faces[i].triangles.reshape(-1, 3, 3) for i in faces])
     key = np.round(tris.reshape(-1, 3), 4)
-    _, inv = np.unique(key, axis=0, return_inverse=True)
+    uk, inv = np.unique(key, axis=0, return_inverse=True)
     inv = inv.reshape(-1, 3)
     E = np.sort(np.concatenate([inv[:, [0, 1]], inv[:, [1, 2]], inv[:, [2, 0]]]), axis=1)
     uE, cnt = np.unique(E, axis=0, return_counts=True)
@@ -1363,23 +1406,45 @@ def _planar_end(model, faces, o, d, lo, hi):
         return lo, hi
     P = np.zeros((inv.max() + 1, 3))
     P[inv.ravel()] = tris.reshape(-1, 3)
+    vf = _vertex_faces(model)
+    own = set(faces)
     mid = 0.5 * (lo + hi)
     res = [lo, hi]
     for side in (0, 1):
         sel = bnd[(((P[bnd[:, 0]] - o) @ d) > mid) == bool(side)]
-        if len(sel) < 6:
+        if len(sel) < 8:
             continue
-        Q = P[np.unique(sel)]
-        c = Q.mean(0)
-        _, sv, vt = np.linalg.svd(Q - c)
-        n = vt[2]
-        if sv[2] > 1e-3 * max(sv[0], 1e-9) * len(Q) ** 0.5 or abs(n @ d) < 0.05:
+        ids = np.unique(sel)
+        h = (P[ids] - o) @ d
+        if h.max() - h.min() < 1e-6:
+            continue                    # Rand senkrecht zur Achse – Wert stimmt bereits
+        # nur ein einziger geschlossener Rand rund um die Achse zählt (keine Durchbrüche von Querbohrungen)
+        parent = {int(v): int(v) for v in ids}
+
+        def root(v):
+            while parent[v] != v:
+                parent[v] = parent[parent[v]]
+                v = parent[v]
+            return v
+        for x, y in sel:
+            parent[root(int(x))] = root(int(y))
+        if len({root(int(v)) for v in ids}) != 1:
             continue
-        if abs(abs(n @ d) - 1) < 1e-6:
+        R = float(np.linalg.norm((P[ids] - o) - np.outer(h, d), axis=1).max())
+        votes = {}
+        for k in map(tuple, uk[ids]):
+            for j in vf.get(k, ()):
+                if j not in own:
+                    votes[j] = votes.get(j, 0) + 1
+        if not votes:
             continue
-        a = ((c - o) @ n) / (d @ n)
-        if lo - 1e-6 <= a <= hi + 1e-6:
-            res[side] = float(a)
+        j = max(votes, key=votes.get)
+        surf = model.faces[j].surf
+        if surf is None:
+            continue
+        a = _line_surface_root(surf, o, d, h.min() - 0.25 * R, h.max() + 0.25 * R)
+        if a is not None and h.min() - 1e-3 <= a <= h.max() + 1e-3:
+            res[side] = a
     return res[0], res[1]
 
 
@@ -1442,7 +1507,7 @@ def find_holes(model):
         for lo, hi, faces in clusters:
             if not any(model.faces[i].ftype == "CYLINDER" for i in faces):
                 continue
-            lo, hi = _planar_end(model, faces, o, d, lo, hi)
+            lo, hi = _axis_surface_end(model, faces, o, d, lo, hi)
             eps = max(model.size * 2e-3, 0.2)
             p_lo, p_hi = o + (lo - eps) * d, o + (hi + eps) * d
             out_lo, out_hi = not inside(model, p_lo), not inside(model, p_hi)
@@ -1601,6 +1666,22 @@ def hole_pattern(model, wcs):
         g.angles = [g.angles[k] for k in order]
     groups.sort(key=lambda g: (g.kind, g.level))
     return groups, (o, d, e1, e2)
+
+
+def entry_info(model, h, wcs):
+    """Eintrittspunkt einer Bohrung für die Maschine: Lage im Nullpunkt-KS (X als Durchmesser
+    um die Längsachse, Z), Winkel am Umfang (C) und Neigung der Bohrungsachse zur Längsachse (B)."""
+    o, d = main_axis(model)
+    e1, e2 = angle_frame(d, wcs)
+    p = np.asarray(h.entry, float)
+    q = p - o
+    r = float(np.linalg.norm(q - (q @ d) * d))
+    c = math.degrees(math.atan2(q @ e2, q @ e1)) % 360.0 if r > 1e-6 else 0.0
+    pw = wcs.to_wcs(p)
+    tool = -unit(h.axis_d)              # Werkzeugrichtung: von außen ins Material
+    b = math.degrees(math.acos(max(-1.0, min(1.0, abs(float(tool @ d))))))
+    return {"point": p, "dia": 2 * r, "z": float(pw[2]), "c": c, "b": b,
+            "wcs": pw, "tool": wcs.dir_to_wcs(tool)}
 
 
 def pitch_text(angles):

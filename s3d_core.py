@@ -1693,8 +1693,13 @@ def entry_info(model, h, wcs):
     c = math.degrees(math.atan2(eo @ e2, eo @ e1)) % 360.0
     pw = wcs.to_wcs(p)
     b = math.degrees(math.acos(max(-1.0, min(1.0, abs(float(tool @ d))))))
+    # Bohrtiefe der Spitze bis Mitte X0 (Ebene durch die Längsachse senkrecht zur Anfahrrichtung)
+    down = -float(tool @ eo)
+    depth_x0 = xr / down if down > 1e-6 else None
+    d_nom = min(h.diameters) if h.diameters else 0.0
+    tip_len = d_nom / 2 / math.tan(math.radians(59)) if d_nom else 0.0     # Spiralbohrer 118°
     return {"point": p, "dia": 2 * xr, "y": y, "z": float(pw[2]), "c": c, "b": b,
-            "wcs": pw, "tool": wcs.dir_to_wcs(tool)}
+            "wcs": pw, "tool": wcs.dir_to_wcs(tool), "depth_x0": depth_x0, "tip118": tip_len}
 
 
 def hole_details(model, h):

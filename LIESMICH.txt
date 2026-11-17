@@ -27,6 +27,8 @@ Neu in 3.3
     Suche, im Browser öffnen/drucken). Liegt im Ordner hilfe\ und ist in der EXE enthalten.
     Eigenes Fenster neben dem Viewer: auf den 2. Bildschirm ziehbar, Pinnadel „Immer im
     Vordergrund“, Größe/Lage werden gemerkt.
+  - F11 = Vollbild nur mit 3D-Ansicht (nochmal F11 oder Esc = zurück).
+  - Druck-Taste = Bildausschnitt aufziehen → Zwischenablage, danach Frage „als Datei speichern?“.
 
 Neu in 3.2.2
 ------------

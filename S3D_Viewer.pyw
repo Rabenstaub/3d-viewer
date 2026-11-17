@@ -870,6 +870,101 @@ class ColorButton(QtWidgets.QPushButton):
         return self.color.name(QtGui.QColor.NameFormat.HexArgb if self.alpha else QtGui.QColor.NameFormat.HexRgb)
 
 
+class SnipOverlay(QtWidgets.QWidget):
+    """Eingefrorenes Bild des Fensters; mit der Maus einen Ausschnitt aufziehen.
+    Klick ohne Ziehen = ganzes Fenster, Esc / rechte Maustaste = Abbruch."""
+
+    def __init__(self, pm, geo, done):
+        super().__init__(None, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+                         | Qt.WindowType.Tool)
+        self.pm, self.done = pm, done
+        self.p0 = self.p1 = None
+        self.setGeometry(geo)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._finished = False
+
+    def paintEvent(self, ev):
+        p = QtGui.QPainter(self)
+        p.drawPixmap(self.rect(), self.pm)
+        p.fillRect(self.rect(), QtGui.QColor(0, 0, 0, 90))
+        r = self._rect()
+        if r is not None:
+            src = QtCore.QRectF(r.x() * self._sx(), r.y() * self._sy(), r.width() * self._sx(), r.height() * self._sy())
+            p.drawPixmap(QtCore.QRectF(r), self.pm, src)
+            p.setPen(QtGui.QPen(QtGui.QColor("#1f6fe5"), 2))
+            p.drawRect(r)
+            p.setPen(QtGui.QColor("#ffffff"))
+            p.drawText(r.adjusted(4, 2, 0, 0).topLeft() + QtCore.QPoint(0, 14),
+                       f"{int(r.width() * self._sx())} × {int(r.height() * self._sy())}")
+        p.setPen(QtGui.QColor("#ffffff"))
+        p.drawText(self.rect().adjusted(0, 8, 0, 0), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                   "Ausschnitt mit der Maus aufziehen · Klick = ganzes Fenster · Esc = Abbruch")
+        p.end()
+
+    def _sx(self):
+        return self.pm.width() / max(1, self.width())
+
+    def _sy(self):
+        return self.pm.height() / max(1, self.height())
+
+    def _rect(self):
+        if self.p0 is None or self.p1 is None:
+            return None
+        return QtCore.QRect(self.p0, self.p1).normalized()
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.RightButton:
+            self._finish(None)
+            return
+        self.p0 = self.p1 = ev.position().toPoint()
+        self.update()
+
+    def mouseMoveEvent(self, ev):
+        if self.p0 is not None:
+            self.p1 = ev.position().toPoint()
+            self.update()
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() != Qt.MouseButton.LeftButton or self.p0 is None:
+            return
+        self.p1 = ev.position().toPoint()
+        r = self._rect()
+        if r is None or r.width() < 6 or r.height() < 6:
+            self._finish(self.pm.copy())
+        else:
+            self._finish(self.pm.copy(QtCore.QRect(int(r.x() * self._sx()), int(r.y() * self._sy()),
+                                                   int(r.width() * self._sx()), int(r.height() * self._sy()))))
+
+    def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key.Key_Escape:
+            self._finish(None)
+
+    def _finish(self, pm):
+        if self._finished:
+            return
+        self._finished = True
+        self.hide()
+        self.deleteLater()
+        QtCore.QTimer.singleShot(0, lambda: self.done(pm))
+
+
+class _PrintKeyFilter(QtCore.QObject):
+    """Unter Windows kommt die Druck-Taste oft nur als „losgelassen“ an – dann hier auslösen."""
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.win = win
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QtCore.QEvent.Type.KeyRelease and ev.key() == Qt.Key.Key_Print and not ev.isAutoRepeat():
+            a = self.win.actions_reg.get("snip", (None,))[0]
+            if a is not None and a.shortcut().matches(QtGui.QKeySequence("Print")) == \
+                    QtGui.QKeySequence.SequenceMatch.ExactMatch:
+                self.win.start_snip()
+        return False
+
+
 def help_dir():
     """Ordner mit Handbuch und Bildern (neben dem Programm bzw. in der EXE)."""
     base = os.path.dirname(os.path.abspath(sys.argv[0] if getattr(sys, "frozen", False) else __file__))
@@ -1241,6 +1336,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view.wheel_hook = self._wheel_hook
         self.view.key_hook = self._section_key
         self.setCentralWidget(self.view)
+        self._print_filter = _PrintKeyFilter(self)
+        QtWidgets.QApplication.instance().installEventFilter(self._print_filter)
         self.lock_badge = QtWidgets.QLabel(self.view)
         self.lock_badge.move(10, 10)
         self.lock_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
@@ -1396,6 +1493,9 @@ class MainWindow(QtWidgets.QMainWindow):
         reg("props", "Eigenschaften / Hilfe", self.open_options, None, tb=tb,
             tip="Einstellungen, Farben, Tastenbelegung und Hilfe zu allen Maus- und Tastenbefehlen")
         reg("help", "Handbuch", self.open_manual, "F1")
+        self.a_full = reg("fullscreen", "Vollbild (ohne Leisten und Seitenfenster)", self.toggle_fullscreen, "F11",
+                          checkable=True)
+        reg("snip", "Bildausschnitt in die Zwischenablage", self.start_snip, "Print")
         reg("ui_bigger", "Bedienoberfläche größer", lambda: self.step_ui_scale(+1), "Ctrl++")
         reg("ui_smaller", "Bedienoberfläche kleiner", lambda: self.step_ui_scale(-1), "Ctrl+-")
         reg("ui_reset", "Bedienoberfläche 100 %", lambda: self.set_ui_scale(100), "Ctrl+0")
@@ -1686,6 +1786,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_wcs_view()
         QtWidgets.QApplication.restoreOverrideCursor()
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION} – {os.path.basename(path)}")
+        self.model_path = path
         self._update_lock_badge()
         self.sel_info.setHtml(
             "<i>Klick: Fläche/Kante · Strg+Klick: mehrere · Shift+Klick: Punkt · "
@@ -2408,8 +2509,112 @@ class MainWindow(QtWidgets.QMainWindow):
             self.status.showMessage("Animation läuft – Esc oder Mausklick hält an")
 
     def on_escape(self):
-        if not self.view.stop_animation():
-            self.clear_selection()
+        if getattr(self, "_snip", None) is not None:
+            return
+        if self.view.stop_animation():
+            return
+        if not self.sel and getattr(self, "_fs_state", None) is not None:
+            self.toggle_fullscreen()          # Esc ohne Auswahl verlässt das Vollbild
+            return
+        self.clear_selection()
+
+    # ---------------- Vollbild ----------------
+    def toggle_fullscreen(self):
+        st = getattr(self, "_fs_state", None)
+        if st is None:
+            bars = self.findChildren(QtWidgets.QToolBar)
+            docks = self.findChildren(QtWidgets.QDockWidget)
+            self._fs_state = {"max": self.isMaximized(),
+                              "bars": [(b, b.isVisible()) for b in bars],
+                              "docks": [(d, d.isVisible()) for d in docks]}
+            for b in bars:
+                b.hide()
+            for d in docks:
+                if not d.isFloating():
+                    d.hide()
+            self.showFullScreen()
+            self.a_full.setChecked(True)
+            self.status.showMessage(f"Vollbild – zurück mit {self._key_text('fullscreen')} oder Esc")
+        else:
+            self._fs_state = None
+            if st["max"]:
+                self.showMaximized()
+            else:
+                self.showNormal()
+            for b, vis in st["bars"]:
+                b.setVisible(vis)
+            for d, vis in st["docks"]:
+                d.setVisible(vis)
+            self.a_full.setChecked(False)
+            self.status.showMessage("Vollbild beendet")
+        QtCore.QTimer.singleShot(50, self.view.update)
+
+    def _key_text(self, aid):
+        a = self.actions_reg.get(aid, (None,))[0]
+        if a is None or a.shortcut().isEmpty():
+            return ""
+        return a.shortcut().toString(QtGui.QKeySequence.SequenceFormat.NativeText).replace(
+            "Ctrl", "Strg").replace("Shift", "Umschalt").replace("Print", "Druck")
+
+    # ---------------- Bildausschnitt (Druck-Taste) ----------------
+    def _grab_window_image(self):
+        """Bild des Programmfensters wie auf dem Bildschirm (inkl. 3D-Ansicht und Beschriftungen)."""
+        scr = self.screen() or QtWidgets.QApplication.primaryScreen()
+        g = self.geometry()
+        pm = None
+        try:
+            sg = scr.geometry()
+            pm = scr.grabWindow(0, g.x() - sg.x(), g.y() - sg.y(), g.width(), g.height())
+        except Exception:
+            pm = None
+        if pm is None or pm.isNull() or pm.width() < 10:
+            # Ersatz: Fenster rendern und das OpenGL-Bild hineinzeichnen
+            img = self.grab().toImage()
+            fb = self.view.grabFramebuffer()
+            p = QtGui.QPainter(img)
+            p.drawImage(self.view.mapTo(self, QtCore.QPoint(0, 0)), fb)
+            p.end()
+            pm = QtGui.QPixmap.fromImage(img)
+        return pm
+
+    def start_snip(self):
+        import time
+        if getattr(self, "_snip", None) is not None or time.monotonic() - getattr(self, "_snip_t", 0) < 0.6:
+            return
+        self._snip_t = time.monotonic()
+        pm = self._grab_window_image()
+        self._snip = SnipOverlay(pm, self.geometry(), self._snip_done)
+        self._snip.show()
+        self._snip.activateWindow()
+
+    def _snip_done(self, pm):
+        self._snip = None
+        if pm is None or pm.isNull():
+            self.status.showMessage("Bildausschnitt abgebrochen")
+            return
+        QtWidgets.QApplication.clipboard().setPixmap(pm)
+        self.status.showMessage(f"Bildausschnitt ({pm.width()} × {pm.height()} Pixel) ist in der Zwischenablage")
+        r = QtWidgets.QMessageBox.question(
+            self, "Bildausschnitt", "Der Ausschnitt ist in der Zwischenablage.\n\nAuch als Bilddatei speichern?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if r != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        import datetime
+        d = self.settings.value("snip_dir", "") or QtCore.QStandardPaths.writableLocation(
+            QtCore.QStandardPaths.StandardLocation.PicturesLocation)
+        mp = getattr(self, "model_path", "") or ""
+        base = os.path.splitext(os.path.basename(mp))[0] if mp else ""
+        name = f"3D_Viewer_{base + '_' if base else ''}{datetime.datetime.now():%Y-%m-%d_%H-%M-%S}.png"
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Bildausschnitt speichern", os.path.join(d, name),
+                                                      "PNG-Bild (*.png);;JPEG-Bild (*.jpg)")
+        if not fn:
+            return
+        self.settings.setValue("snip_dir", os.path.dirname(fn))
+        if pm.save(fn):
+            self.status.showMessage(f"Gespeichert: {fn}")
+        else:
+            QtWidgets.QMessageBox.warning(self, "Bildausschnitt", f"Konnte nicht speichern:\n{fn}")
 
     def on_perspective(self):
         self.view.set_perspective(self.a_persp.isChecked())

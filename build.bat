@@ -17,7 +17,8 @@ echo === Versionsinfo erzeugen ===
 
 echo === EXE bauen ===
 "%PY%" -m PyInstaller --noconfirm --clean --onefile --windowed --name %NAME% ^
-  --icon S3D_Viewer.ico --add-data "S3D_Viewer.ico;." --version-file version_info.txt ^
+  --icon S3D_Viewer.ico --add-data "S3D_Viewer.ico;." --add-data "hilfe\handbuch.html;hilfe" --add-data "hilfe\bilder;hilfe\bilder" ^
+  --version-file version_info.txt ^
   --hidden-import s3d_core --collect-submodules pyqtgraph.opengl ^
   --hidden-import OpenGL.platform.win32 --hidden-import OpenGL.arrays.numpymodule ^
   --exclude-module tkinter --exclude-module matplotlib --exclude-module scipy ^
@@ -26,6 +27,7 @@ echo === EXE bauen ===
 
 echo === Demo-Datei dazulegen ===
 if exist "demo\Demo_Welle.s3d" copy /y "demo\Demo_Welle.s3d" "dist\Demo_Welle.s3d" >nul
+if exist "demo\Demo_Indexbolzen.s3d" copy /y "demo\Demo_Indexbolzen.s3d" "dist\Demo_Indexbolzen.s3d" >nul
 
 echo === Signieren (Certum SimplySign) ===
 set SIGNTOOL=

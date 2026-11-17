@@ -23,6 +23,8 @@ Neu in 3.3
     1:50 …) in Maßliste und Kontur.
   - Kugelige Spitzen (z. B. R5 am Indexbolzen) erscheinen jetzt in der Drehkontur.
   - Demo-Welle: Einstich 3×1,5, Senkung 90° an den M6, außermittige Bohrung Ø6 (Y8).
+  - Ausführliches Handbuch mit Bildern und Erklär-Grafiken: Taste F1 (Inhaltsverzeichnis,
+    Suche, im Browser öffnen/drucken). Liegt im Ordner hilfe\ und ist in der EXE enthalten.
 
 Neu in 3.2.2
 ------------

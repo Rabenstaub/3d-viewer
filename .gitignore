@@ -1,6 +1,7 @@
 # Firmendaten niemals hochladen: alle .s3d-Dateien ausser der Demo
 *.s3d
 !demo/Demo_Welle.s3d
+!demo/Demo_Indexbolzen.s3d
 
 # Laufzeit / Build
 __pycache__/

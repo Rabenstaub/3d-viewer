@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>3D Viewer – Handbuch</title>
+<style>
+body { font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; color: #1e2530; background: #ffffff; max-width: 980px; margin: 0 auto; padding: 8px 18px; line-height: 1.45; }
+h1 { color: #1d4fb8; font-size: 20pt; margin: 6px 0 4px 0; }
+h2 { color: #1d4fb8; font-size: 15pt; margin: 26px 0 6px 0; border-bottom: 2px solid #c9d6ef; padding-bottom: 3px; }
+h3 { color: #24324a; font-size: 12pt; margin: 16px 0 4px 0; }
+p { margin: 4px 0 8px 0; }
+table { border-collapse: collapse; margin: 6px 0 10px 0; }
+td, th { border: 1px solid #c9d1de; padding: 4px 8px; vertical-align: top; }
+th { background: #e8eef9; text-align: left; }
+.tipp { background: #eef6ee; border-left: 4px solid #1a8a3a; padding: 6px 10px; margin: 8px 0; }
+.achtung { background: #fff3e6; border-left: 4px solid #e07800; padding: 6px 10px; margin: 8px 0; }
+.bild { margin: 8px 0 4px 0; }
+.unter { color: #6b7890; font-size: 9pt; margin-top: 0; }
+.toc a { text-decoration: none; color: #1d4fb8; }
+kbd { background: #f1f3f7; border: 1px solid #b9c2d0; border-radius: 3px; padding: 0 4px; font-family: Consolas, monospace; }
+</style>
+</head>
+<body>
+
+<a name="start"></a>
+<h1>3D Viewer – Handbuch</h1>
+<p>Der 3D Viewer öffnet <b>.s3d-Dateien</b> (3D-Export aus dem CAD) und liest daraus alles ab, was man für die
+Arbeitsvorbereitung an Drehmaschinen und Dreh-Fräszentren braucht: Durchmesser, Längen, Radien, Kegel, Einstiche,
+Bohrungen mit Eintrittspunkt für die Maschine, Gewinde, Nuten und Schlüsselflächen.</p>
+<div class="achtung"><b>Wichtig:</b> Toleranzen, Passungen und Oberflächenangaben stehen nicht in der 3D-Datei.
+Für die Fertigung gilt immer die gültige Zeichnung – der Viewer hilft beim Ablesen und Prüfen.</div>
+
+<h3>Inhalt</h3>
+<table class="toc">
+<tr><td><a href="#erste">1 Erste Schritte</a></td><td><a href="#bohrungen">9 Bohrungen, Senkung, Bohrspitze</a></td></tr>
+<tr><td><a href="#ansicht">2 Ansicht und Darstellung</a></td><td><a href="#eintritt">10 Eintrittspunkt (roter Punkt)</a></td></tr>
+<tr><td><a href="#messen">3 Auswählen und Messen</a></td><td><a href="#ausmittig">11 Außermittige Bohrungen (Y)</a></td></tr>
+<tr><td><a href="#nullpunkt">4 Nullpunkt und Koordinaten</a></td><td><a href="#bohrbild">12 Bohrbild (Lochkreis, C-Winkel)</a></td></tr>
+<tr><td><a href="#massliste">5 Drehteil: Maßliste</a></td><td><a href="#gewinde">13 Gewinde</a></td></tr>
+<tr><td><a href="#kontur">6 Drehteil: Kontur, DXF, G-Code</a></td><td><a href="#fraesen">14 Fräsen: Nut, Schlüsselfläche</a></td></tr>
+<tr><td><a href="#radius">7 Radien, Kegel, scharfe Ecke</a></td><td><a href="#werkzeug">15 Werkzeug: Welche Platte kommt hin?</a></td></tr>
+<tr><td><a href="#einstich">8 Einstiche und Freistiche</a></td><td><a href="#fragen">16 Häufige Fragen · 17 Alle Tasten</a></td></tr>
+</table>
+
+<a name="erste"></a>
+<h2>1 Erste Schritte</h2>
+<p><b>Datei öffnen:</b> Knopf <b>Öffnen</b> (<kbd>Strg</kbd>+<kbd>O</kbd>) oder die .s3d-Datei einfach ins Fenster ziehen.
+Zum Ausprobieren liegen im Ordner <b>demo</b> zwei frei erfundene Teile: <b>Demo_Welle.s3d</b> und <b>Demo_Indexbolzen.s3d</b>.</p>
+<p class="bild"><img src="bilder/uebersicht.png" width="820"></p>
+<p class="unter">Oben die Knöpfe, links die Daten des Teils (Modell, Parameter, Features, Flächen), in der Mitte das 3D-Bild,
+rechts die Analyse (Messen, Nullpunkt, Bohrungen, Gewinde, Drehteil).</p>
+<table>
+<tr><th>Was?</th><th>So geht's</th></tr>
+<tr><td>Teil drehen</td><td>linke Maustaste gedrückt halten und ziehen (mit <kbd>Strg</kbd> feiner)</td></tr>
+<tr><td>Verschieben</td><td>rechte Maustaste ziehen</td></tr>
+<tr><td>Zoomen</td><td>Mausrad (mit <kbd>Umschalt</kbd> feiner, mit <kbd>Strg</kbd> zum Mauszeiger) oder mittlere Maustaste ziehen</td></tr>
+<tr><td>Um die Längsachse drehen</td><td><kbd>Alt</kbd> + Mausrad (5° je Raste)</td></tr>
+<tr><td>Bedienoberfläche größer/kleiner</td><td><kbd>AltGr</kbd> + Mausrad</td></tr>
+<tr><td>Drehpunkt setzen</td><td>Doppelklick auf das Teil</td></tr>
+<tr><td>Ganzes Teil zeigen</td><td>Knopf <b>Fenstergröße</b></td></tr>
+<tr><td>Menü mit allen Funktionen</td><td>Rechtsklick (ohne Ziehen) ins 3D-Bild</td></tr>
+<tr><td>Alles zurücksetzen</td><td>Knopf <b>Zurücksetzen</b></td></tr>
+</table>
+
+<a name="ansicht"></a>
+<h2>2 Ansicht und Darstellung</h2>
+<table>
+<tr><th>Knopf</th><th>Wirkung</th></tr>
+<tr><td><b>Iso, Vorne, Hinten, Oben, Unten, Links, Rechts</b></td><td>Standard-Blickrichtungen. <b>Normal auf</b> = senkrecht auf die gewählte Fläche schauen.</td></tr>
+<tr><td><b>Schnitt</b> (<kbd>S</kbd>)</td><td>Längsschnitt → Querschnitt → aus. Verschieben mit <kbd>Umschalt</kbd>+Mausrad oder Pfeiltasten, kippen mit <kbd>Strg</kbd>+<kbd>Umschalt</kbd>+Mausrad.</td></tr>
+<tr><td><b>Transparent</b> (<kbd>G</kbd>)</td><td>Glas-Ansicht: Bohrungen und Kanäle im Inneren sichtbar. In diesem Modus können keine Punkte angeklickt werden.</td></tr>
+<tr><td><b>Draht</b></td><td>nur Kanten (Linien-Ansicht) – Klicks wählen Eckpunkte und Kanten.</td></tr>
+<tr><td><b>Gewinde farbig</b></td><td>Bereich mit Gewinde grün, Kernloch ohne Gewinde orange.</td></tr>
+<tr><td><b>Farben ignorieren</b> (<kbd>Y</kbd>)</td><td>einheitliches Grau statt CAD-Farben.</td></tr>
+<tr><td><b>Box</b></td><td>Außenmaße / Rohteilmaß als Kasten.</td></tr>
+<tr><td><b>Annotationen</b> (<kbd>O</kbd>)</td><td>Gewinde-Hinweise und rote Eintrittspunkte ein/aus. Rechtsklick → „Annotationen nach Typ“ für einzelne Arten.</td></tr>
+<tr><td><b>Bohrbild</b> (<kbd>Strg</kbd>+<kbd>B</kbd>)</td><td>Lochkreise und Winkel aller Bohrungen.</td></tr>
+<tr><td><b>Fenster links / rechts</b></td><td>Seitenfenster ein- und ausblenden.</td></tr>
+<tr><td><b>Qualität</b></td><td>wie fein Rundungen dargestellt werden (Messwerte werden immer exakt gerechnet).</td></tr>
+<tr><td><b>Sperrachse</b> / <b>Z-Rotation</b></td><td>Drehen nur um eine Achse – praktisch bei langen Wellen.</td></tr>
+</table>
+
+<a name="messen"></a>
+<h2>3 Auswählen und Messen</h2>
+<table>
+<tr><th>Aktion</th><th>Ergebnis</th></tr>
+<tr><td>Klick auf Fläche oder Kante</td><td>wird rot; Infos rechts unter <b>Auswahl / Messen</b>: Art, Ø, Radius, Kegelwinkel … Nochmal klicken = abwählen.</td></tr>
+<tr><td><kbd>Strg</kbd> + Klick</td><td>mehrere Elemente wählen</td></tr>
+<tr><td><kbd>Umschalt</kbd> + Klick</td><td>beliebigen Punkt auf der Fläche wählen</td></tr>
+<tr><td>Zwei Elemente gewählt</td><td>automatische <b>Messung</b>: Abstand, Wandstärke, Achsabstand, Winkel, dX/dY/dZ im Nullpunkt</td></tr>
+<tr><td><kbd>Alt</kbd> + Rechteck ziehen</td><td>mehrere Elemente auf einmal wählen</td></tr>
+</table>
+<div class="tipp"><b>Tipp:</b> Eine Fläche, die man nicht anklicken kann, weil sie verdeckt ist: <b>Schnitt</b> oder <b>Transparent</b>
+einschalten, oder links unter <b>Flächen</b> in der Liste anklicken.</div>
+
+<a name="nullpunkt"></a>
+<h2>4 Nullpunkt und Koordinaten an der Drehmaschine</h2>
+<p class="bild"><img src="bilder/d_koordinaten.png" width="820"></p>
+<p>Beim Öffnen legt der Viewer den Nullpunkt automatisch für die Drehmaschine an: <b>Z</b> liegt auf der Längsachse,
+<b>X</b> zeigt nach außen und wird als <b>Durchmesser</b> angegeben. <b>C0°</b> ist die Richtung von +X.</p>
+<table>
+<tr><th>Ich will …</th><th>So geht's</th></tr>
+<tr><td>Z0 auf eine andere Planfläche legen</td><td>Planfläche anklicken → Reiter <b>Nullpunkt</b> → <b>Nullpunkt aus Auswahl</b></td></tr>
+<tr><td>Nullpunkt in Lochkreismitte, Kreismitte, Punkt …</td><td>passende Elemente wählen → <b>Nullpunkt aus Auswahl</b> (Beispiele stehen im Reiter)</td></tr>
+<tr><td>C0° auf eine bestimmte Bohrung legen</td><td>Bohrung anklicken → Reiter Nullpunkt oder Rechtsklick → <b>C0° auf Auswahl legen</b></td></tr>
+<tr><td>C0° drehen</td><td><b>C0° um 180° drehen</b> oder <b>C0° um Winkel drehen …</b></td></tr>
+<tr><td>Z-Richtung umdrehen / Nullpunkt verschieben</td><td><b>Z umkehren</b> / <b>Verschieben …</b></td></tr>
+<tr><td>Zurück zur Grundeinstellung</td><td><b>Drehmaschine (Z = Länge)</b></td></tr>
+</table>
+<div class="achtung"><b>Vorzeichen:</b> Im Viewer zeigt Z von Z0 ins Bauteil hinein (positiv). Liegt bei deiner Maschine das
+Material im Minus-Bereich, wird aus Z 4,699 an der Maschine Z−4,699. Gleiches gilt für die Drehrichtung von B und C – einmal an
+der Maschine prüfen.</div>
+
+<a name="massliste"></a>
+<h2>5 Drehteil: Maßliste</h2>
+<p>Rechts <b>Drehteil → Maßliste</b>: alle Durchmesser, Planflächen, Fasen, Kegel und Radien mit Z-Lage – sortiert, filterbar
+(„Zeigen“) und als CSV speicherbar. Zeile anklicken = Fläche wird im Bild gezeigt.</p>
+<p class="bild"><img src="bilder/d_massliste.png" width="760"></p>
+<p><b>ab links / ab rechts</b> = Abstand von der Stirnfläche am kleinsten bzw. größten Z – so, wie es meistens in der Zeichnung bemaßt ist.</p>
+
+<a name="kontur"></a>
+<h2>6 Drehteil: Kontur, DXF und G-Code</h2>
+<p class="bild"><img src="bilder/kontur.png" width="820"></p>
+<p><b>Drehteil → Kontur</b> zeigt die Außen- oder Innenkontur als Elementliste: Endpunkt Z und X, bei Radien R, Mittelpunkt und
+Drehsinn (G2/G3). „im Bild“ zeichnet die Kontur ins 3D-Bild, „umkehren“ ändert die Richtung.</p>
+<table>
+<tr><th>Einstellung</th><th>Bedeutung</th></tr>
+<tr><td>Steuerung</td><td>ISO/DIN (Fanuc, Mazak EIA, DMG MORI, DIN PLUS – Bogen mit R) oder Siemens 840D (CR=)</td></tr>
+<tr><td>X als Radius</td><td>für Steuerungen, die X im Radius programmieren</td></tr>
+<tr><td>Werkzeug vor der Drehmitte</td><td>tauscht G2/G3 (z. B. Flachbett, Revolver vorne)</td></tr>
+<tr><td>Als CSV / DXF / G-Code speichern</td><td>Punktliste, Zeichnung (Layer AUSSEN, INNEN, ACHSE) oder Konturprogramm (nur Geometrie, ohne Technologie)</td></tr>
+</table>
+<div class="achtung">Der erzeugte G-Code ist reine Kontur (G0/G1/G2/G3) – Werkzeug, Drehzahl, Vorschub und Schneidenradiuskorrektur
+ergänzt du selbst. Vor dem ersten Lauf immer in der Simulation prüfen.</div>
+
+<a name="radius"></a>
+<h2>7 Radien, Kegel und scharfe Ecke</h2>
+<h3>Radius-Mittelpunkt</h3>
+<p class="bild"><img src="bilder/d_radius.png" width="720"></p>
+<p>Radius anklicken: Am Bauteil erscheinen <b>R</b>, der Mittelpunkt <b>M</b> mit <b>Z</b> und <b>X (Ø)</b> sowie Anfang und Ende des Bogens.
+<b>Scharfe Ecke:</b> Radius oder Fase anklicken → Rechtsklick → <b>Radius/Fase löschen (scharfe Ecke)</b>. Der Viewer zeigt dann die gedachte
+Ecke mit exaktem Z und Ø (z. B. für Bemaßung ohne Radius). <b>Radien/Fasen wiederherstellen</b> (Rechtsklick) holt sie zurück.</p>
+<h3>Kegel nach Norm</h3>
+<p class="bild"><img src="bilder/d_kegel.png" width="760"></p>
+<p>Bei Kegeln stehen in Maßliste und Kontur (Spalte Info): halber Winkel α/2, Kegelwinkel α, <b>D</b>, <b>d</b>, <b>L</b> und bei
+schlanken Kegeln das Verhältnis <b>1:x</b>. Passt der Kegel zu einer Norm, steht sie dabei: Morsekegel MK0–MK6, metrischer
+Kegel 1:20, Steilkegel 7:24 (SK/ISO/BT), HSK 1:10, Kegelstift 1:50, 1:30, 1:16, 1:5, 1:3.</p>
+
+<a name="einstich"></a>
+<h2>8 Einstiche und Freistiche</h2>
+<p class="bild"><img src="bilder/d_einstich.png" width="800"></p>
+<p><b>Drehteil → Einstiche</b> listet jede Vertiefung in der Kontur: Z von/bis, <b>Breite</b>, <b>Tiefe</b>, an welchem Ø,
+Grund-Ø und Radien im Grund. <b>Einstich</b> = zwischen zwei gleich hohen Stellen; <b>Freistich</b> = direkt am Absatz.
+Hat ein Freistich einen Grundradius und eine 15°-Flanke, steht „ähnlich DIN 509 Form E/F“ dabei – die Maße bitte mit der Norm
+vergleichen. Innen-Einstiche werden ebenfalls gefunden.</p>
+<p class="bild"><img src="bilder/einstiche.png" width="820"></p>
+
+<a name="bohrungen"></a>
+<h2>9 Bohrungen, Senkung und Bohrspitze</h2>
+<p>Rechts unter <b>Bohrungen</b> steht jede Bohrung mit allen Werten. Zeile anklicken = Bohrung im Bild zeigen.</p>
+<table>
+<tr><th>Spalte</th><th>Bedeutung</th></tr>
+<tr><td>Ø, Gewinde, Gew.-Tiefe, Kernloch-T.</td><td>Durchmesser bzw. Gewinde mit Gewinde- und Kernlochtiefe</td></tr>
+<tr><td>X, Y, Z / I, J, K</td><td>Eintrittspunkt und Bohrrichtung im Nullpunkt (kartesisch)</td></tr>
+<tr><td>Tiefe, Art</td><td>Tiefe ab Eintritt, Durchgangsbohrung oder Sackloch</td></tr>
+<tr><td>Winkel°, Abst. Mitte</td><td>Lage am Umfang und Lochkreis-Radius</td></tr>
+<tr><td><b>Masch. X Ø, Masch. Y, Masch. Z, C°, B°</b></td><td>Werte für das Dreh-Fräszentrum: so anfahren und bohren (siehe Kapitel 10 und 11)</td></tr>
+<tr><td><b>Senkung/Stufe</b></td><td>Senk-Ø, Senkwinkel und Tiefe – oder eine Stufe (Senkung mit Zylinder)</td></tr>
+<tr><td><b>Spitze</b></td><td>Winkel und Länge der Bohrspitze (z. B. 118° L 1,502), sonst „durch“ oder „flach“</td></tr>
+<tr><td><b>Tiefe voller Ø</b></td><td>bis wohin der volle Durchmesser reicht (Gesamttiefe ohne Spitze)</td></tr>
+</table>
+<p class="bild"><img src="bilder/d_senkung.png" width="720"></p>
+<p class="bild"><img src="bilder/bohrungen.png" width="820"></p>
+
+<a name="eintritt"></a>
+<h2>10 Eintrittspunkt schräger und radialer Bohrungen (roter Punkt)</h2>
+<p>Bei jeder Bohrung, die nicht in Längsrichtung liegt, sitzt ein <b>roter Punkt</b> genau dort, wo die <b>Bohrungsachse</b> auf
+die <b>Oberfläche</b> trifft – auch wenn die Fläche schräg (Kegel), rund (Mantel, Radius) oder eben ist. Das ist der Punkt, den die
+Maschine als Bohrungsanfang braucht.</p>
+<p class="bild"><img src="bilder/d_eintritt.png" width="820"></p>
+<p><b>So geht's:</b> Annotationen an (<kbd>O</kbd>), Transparent aus, so drehen, dass man in die Bohrung schaut, und <b>auf den roten
+Punkt klicken</b>. Am Punkt erscheinen:</p>
+<table>
+<tr><td><b>X</b></td><td>Durchmesser-Wert des Eintrittspunkts</td></tr>
+<tr><td><b>Y</b></td><td>nur bei außermittigen Bohrungen: Versatz zur Mitte</td></tr>
+<tr><td><b>Z</b></td><td>Lage auf der Längsachse ab Z0</td></tr>
+<tr><td><b>C</b></td><td>Winkel am Umfang (Werkzeug kommt aus dieser Richtung)</td></tr>
+<tr><td><b>B</b></td><td>Neigung der Bohrung zur Längsachse (90° = radial, 45° = schräg)</td></tr>
+</table>
+<p>Zusätzlich zeichnet der Viewer die <b>Bohrungsachse (blau)</b> und die <b>Flankenlinie der Fläche (orange)</b> – beide schneiden
+sich sichtbar im roten Punkt. Unten in der Statuszeile stehen außerdem Werkzeugrichtung und Bohrtiefe.</p>
+<p class="bild"><img src="bilder/eintritt.png" width="820"></p>
+<div class="tipp"><b>Tipp:</b> Dieselben Werte stehen ohne Klicken in der Bohrungstabelle (Masch. X Ø, Y, Z, C°, B°).</div>
+
+<a name="ausmittig"></a>
+<h2>11 Außermittige Bohrungen (Y-Versatz)</h2>
+<p class="bild"><img src="bilder/d_ausmittig.png" width="600"></p>
+<p>Geht eine Bohrung nicht durch die Bauteilmitte, braucht die Maschine die <b>Y-Achse</b>. Der Viewer dreht C so, dass das
+Werkzeug von „oben“ kommt, und gibt dann <b>X (Ø)</b>, <b>Y-Versatz</b>, <b>Z</b>, <b>C</b> und <b>B</b> an. Im Bohrbild steht
+der Versatz mit dabei (z. B. „180° Ø6 Y 8“).</p>
+
+<a name="bohrbild"></a>
+<h2>12 Bohrbild (Lochkreis, Teilung, C-Winkel)</h2>
+<p class="bild"><img src="bilder/d_bohrbild.png" width="460"> <img src="bilder/bohrbild.png" width="430"></p>
+<p>Knopf <b>Bohrbild</b> (<kbd>Strg</kbd>+<kbd>B</kbd>): Lochkreise an Stirnseiten mit Ø, Anzahl, Teilung („6× 60° gleich geteilt“)
+und Winkel jeder Bohrung. Radiale und schräge Bohrungen bekommen ein Schild mit Winkel, Ø, Neigung ∠ und ggf. Y-Versatz.
+Die Winkel zählen gegen den Uhrzeigersinn in der aktuellen Blickrichtung, 0° = C0°.</p>
+
+<a name="gewinde"></a>
+<h2>13 Gewinde</h2>
+<p class="bild"><img src="bilder/d_gewinde.png" width="680"></p>
+<p>Gewinde stehen im CAD als „symbolisches Gewinde“ in der Datei. Der Viewer zeigt sie rechts unter <b>Gewinde</b> und in der
+Bohrungstabelle: Bezeichnung (z. B. M6×1), <b>Gewindetiefe</b>, Kernloch-Ø, <b>Kernlochtiefe</b>, Steigung. Mit
+<b>Gewinde farbig</b> ist der Bereich mit Gewinde im Bauteil grün eingefärbt – am besten im <b>Schnitt</b> ansehen.</p>
+
+<a name="fraesen"></a>
+<h2>14 Fräsen: Nut, Schlüsselfläche, Abflachung</h2>
+<p class="bild"><img src="bilder/d_fraesen.png" width="820"></p>
+<p><b>Drehteil → Fräsen</b> findet gefräste Stellen am Drehteil:</p>
+<table>
+<tr><th>Art</th><th>Angaben</th></tr>
+<tr><td><b>Nut</b> (Boden mit zwei Seitenwänden)</td><td>Breite, Tiefe ab Außendurchmesser (in Nutmitte), an welchem Ø, Z von/bis, Länge, C-Lage, Enden rund oder eckig</td></tr>
+<tr><td><b>Schlüsselfläche</b> (zwei gegenüberliegende Flächen)</td><td>SW, Tiefe ab Ø, Z von/bis, Länge, C-Lage beider Flächen</td></tr>
+<tr><td><b>Abflachung</b> (einzelne Fläche)</td><td>Tiefe ab Ø, Abstand Boden ↔ Mitte, Z, Länge, C</td></tr>
+</table>
+<p>C° ist die Richtung, aus der das Werkzeug auf den Boden schaut. Zeile anklicken = Flächen im Bild markiert.</p>
+<p class="bild"><img src="bilder/fraesen.png" width="820"></p>
+
+<a name="werkzeug"></a>
+<h2>15 Werkzeug: Welche Platte kommt hin?</h2>
+<p class="bild"><img src="bilder/d_werkzeug.png" width="820"></p>
+<p>Fällt die Kontur in Vorschubrichtung ab (Kegel, Radius, Absatz), muss die Platte hinten genug Freiraum haben. Dieser
+Freiraum ist der <b>Nebeneinstellwinkel κ' = 180° − κr − ε</b>. Er muss größer sein als der Abfallwinkel δ der Kontur
+(der Viewer rechnet 2° Sicherheit dazu).</p>
+<table>
+<tr><th>Platte</th><th>Spitzenwinkel ε</th><th>Einstellwinkel κr</th><th>κ' (so steil darf es abfallen)</th></tr>
+<tr><td>CNMG</td><td>80°</td><td>95°</td><td>5°</td></tr>
+<tr><td>TNMG</td><td>60°</td><td>93°</td><td>27°</td></tr>
+<tr><td>DNMG</td><td>55°</td><td>93°</td><td>32°</td></tr>
+<tr><td>VBMT</td><td>35°</td><td>93°</td><td>52°</td></tr>
+<tr><td>VBMT</td><td>35°</td><td>72,5°</td><td>72,5°</td></tr>
+</table>
+<p><b>Drehteil → Werkzeug</b>: oben Außen-/Innenkontur, Vorschubrichtung und deine Platte wählen. Die Tabelle zeigt für jedes
+Element, wie steil es in −Z und +Z abfällt und welche Platte mindestens nötig ist. <b>Rot</b> = mit deiner Platte nicht erreichbar.
+Der Knopf <b>Nicht erreichbare Stellen zeigen</b> markiert diese Flächen im Bild. Unten stehen außerdem der größte erlaubte
+<b>Schneidenradius</b> (wegen Hohlkehlen) und die größte <b>Einstechbreite</b>.</p>
+<p class="bild"><img src="bilder/werkzeug.png" width="820"></p>
+<div class="tipp"><b>90°</b> bedeutet Planfläche oder Absatz: In dieser Richtung kommt keine Längsdrehplatte hin – aus der
+Gegenrichtung drehen, plandrehen oder einstechen.</div>
+
+<a name="fragen"></a>
+<h2>16 Häufige Fragen</h2>
+<table>
+<tr><th>Frage</th><th>Antwort</th></tr>
+<tr><td>Ich sehe keinen roten Punkt.</td><td>Annotationen (<kbd>O</kbd>) einschalten. Prüfen, ob die neueste Version läuft (Titelleiste). Bei verdeckten Bohrungen das Teil drehen.</td></tr>
+<tr><td>Ich kann den roten Punkt nicht anklicken.</td><td>Transparent (<kbd>G</kbd>) ausschalten – in der Glas-Ansicht werden immer Flächen gewählt.</td></tr>
+<tr><td>Der Wert hat das falsche Vorzeichen.</td><td>Der Viewer zählt Z ins Bauteil positiv. An der Maschine kann Z (und B) negativ sein.</td></tr>
+<tr><td>Die Drehteil-Tabellen sind leer.</td><td>Nullpunkt-Z liegt nicht auf der Längsachse: Reiter Nullpunkt → <b>Drehmaschine (Z = Länge)</b>.</td></tr>
+<tr><td>Wie genau sind die Werte?</td><td>Durchmesser, Radien, Winkel und Lagen werden aus der exakten CAD-Geometrie gerechnet, nicht aus dem Bildschirmbild.</td></tr>
+<tr><td>Welche Version läuft?</td><td>Knopf <b>i</b> oben rechts oder Titelleiste.</td></tr>
+</table>
+
+<a name="tasten"></a>
+<h2>17 Alle Tasten</h2>
+<p>Jede Taste lässt sich unter <b>Eigenschaften / Hilfe → Tastenbelegung</b> ändern.</p>
+<!--TASTEN-->
+
+<p class="unter" style="margin-top:24px">3D Viewer · © 2026 Christian Diezinger · github.com/Rabenstaub · MIT-Lizenz</p>
+</body>
+</html>

@@ -870,6 +870,82 @@ class ColorButton(QtWidgets.QPushButton):
         return self.color.name(QtGui.QColor.NameFormat.HexArgb if self.alpha else QtGui.QColor.NameFormat.HexRgb)
 
 
+def help_dir():
+    """Ordner mit Handbuch und Bildern (neben dem Programm bzw. in der EXE)."""
+    base = os.path.dirname(os.path.abspath(sys.argv[0] if getattr(sys, "frozen", False) else __file__))
+    for d in (os.path.join(getattr(sys, "_MEIPASS", base), "hilfe"), os.path.join(base, "hilfe")):
+        if os.path.isfile(os.path.join(d, "handbuch.html")):
+            return d
+    return None
+
+
+class ManualDialog(QtWidgets.QDialog):
+    """Ausführliches Handbuch mit Bildern: Inhaltsverzeichnis links, Text rechts, Suche."""
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.setWindowTitle(f"{APP_NAME} – Handbuch")
+        self.resize(1180, 820)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        lay = QtWidgets.QVBoxLayout(self)
+        top = QtWidgets.QHBoxLayout()
+        self.search = QtWidgets.QLineEdit()
+        self.search.setPlaceholderText("Im Handbuch suchen … (Enter = weiter)")
+        self.search.returnPressed.connect(self._find)
+        top.addWidget(self.search, 1)
+        b = QtWidgets.QPushButton("Im Browser öffnen / drucken")
+        b.clicked.connect(self._open_browser)
+        top.addWidget(b)
+        lay.addLayout(top)
+        split = QtWidgets.QSplitter()
+        self.toc = QtWidgets.QListWidget()
+        self.toc.setMaximumWidth(320)
+        self.toc.setWordWrap(True)
+        self.toc.itemClicked.connect(lambda it: self.tb.scrollToAnchor(it.data(Qt.ItemDataRole.UserRole)))
+        self.tb = QtWidgets.QTextBrowser()
+        self.tb.setOpenExternalLinks(True)
+        split.addWidget(self.toc)
+        split.addWidget(self.tb)
+        split.setStretchFactor(1, 1)
+        lay.addWidget(split, 1)
+        self.dir = help_dir()
+        self.html = ""
+        if self.dir is None:
+            self.tb.setHtml("<p>Handbuch nicht gefunden – der Ordner <b>hilfe</b> fehlt neben dem Programm.</p>"
+                            + win.help_html())
+            return
+        html = open(os.path.join(self.dir, "handbuch.html"), encoding="utf-8").read()
+        html = html.replace("<!--TASTEN-->", win.keys_table_html())
+        html = html.replace("3D Viewer – Handbuch</h1>", f"3D Viewer – Handbuch <span style='color:#6b7890; "
+                            f"font-size:11pt; font-weight:400'>Version {APP_VERSION}</span></h1>", 1)
+        self.html = html
+        self.tb.setSearchPaths([self.dir])
+        self.tb.document().setMetaInformation(QtGui.QTextDocument.MetaInformation.DocumentUrl,
+                                              QtCore.QUrl.fromLocalFile(self.dir + os.sep).toString())
+        self.tb.setHtml(html)
+        import re
+        for anchor, title in re.findall(r'<a name="([^"]+)"></a>\s*<h2>([^<]+)</h2>', html):
+            it = QtWidgets.QListWidgetItem(title)
+            it.setData(Qt.ItemDataRole.UserRole, anchor)
+            self.toc.addItem(it)
+
+    def _find(self):
+        t = self.search.text().strip()
+        if t and not self.tb.find(t):
+            self.tb.moveCursor(QtGui.QTextCursor.MoveOperation.Start)
+            self.tb.find(t)
+
+    def _open_browser(self):
+        if not self.html:
+            return
+        import tempfile
+        fn = os.path.join(tempfile.gettempdir(), "3D_Viewer_Handbuch.html")
+        base = QtCore.QUrl.fromLocalFile(self.dir + os.sep).toString()
+        with open(fn, "w", encoding="utf-8") as fh:
+            fh.write(self.html.replace("<head>", f'<head><base href="{base}">', 1))
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(fn))
+
+
 class OptionsDialog(QtWidgets.QDialog):
     def __init__(self, win, start_tab=None):
         super().__init__(win)
@@ -882,10 +958,17 @@ class OptionsDialog(QtWidgets.QDialog):
         self.tabs = tabs
         lay.addWidget(tabs)
         self.w = {}
+        hw = QtWidgets.QWidget()
+        hl = QtWidgets.QVBoxLayout(hw)
+        hl.setContentsMargins(0, 0, 0, 0)
+        mb = QtWidgets.QPushButton("📖  Ausführliches Handbuch mit Bildern öffnen (F1)")
+        mb.clicked.connect(lambda: ManualDialog(win).exec())
+        hl.addWidget(mb)
         hb = QtWidgets.QTextBrowser()
         hb.setOpenExternalLinks(True)
         hb.setHtml(win.help_html())
-        tabs.addTab(hb, "Hilfe")
+        hl.addWidget(hb, 1)
+        tabs.addTab(hw, "Hilfe")
 
         def form_tab(title):
             w = QtWidgets.QWidget()
@@ -961,7 +1044,7 @@ class OptionsDialog(QtWidgets.QDialog):
         color(f, "thread_color", "Gewindebereich:")
 
         f = form_tab("Steuerung")
-        info = QtWidgets.QLabel("Alle Maus- und Tastenbefehle stehen im Reiter <b>Hilfe</b> (Taste F1).")
+        info = QtWidgets.QLabel("Alle Maus- und Tastenbefehle stehen im Reiter <b>Hilfe</b>, das ausführliche Handbuch mit Bildern öffnet die Taste F1.")
         info.setWordWrap(True)
         f.addRow(info)
         check(f, "wheel_invert", "Mausrad-Richtung umkehren:")
@@ -1282,7 +1365,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tb.addSeparator()
         reg("props", "Eigenschaften / Hilfe", self.open_options, None, tb=tb,
             tip="Einstellungen, Farben, Tastenbelegung und Hilfe zu allen Maus- und Tastenbefehlen")
-        reg("help", "Hilfe", lambda: self.open_options(help_tab=True), "F1")
+        reg("help", "Handbuch", self.open_manual, "F1")
         reg("ui_bigger", "Bedienoberfläche größer", lambda: self.step_ui_scale(+1), "Ctrl++")
         reg("ui_smaller", "Bedienoberfläche kleiner", lambda: self.step_ui_scale(-1), "Ctrl+-")
         reg("ui_reset", "Bedienoberfläche 100 %", lambda: self.set_ui_scale(100), "Ctrl+0")
@@ -1925,6 +2008,23 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         return None
 
+    def keys_table_html(self):
+        """Tabelle aller Tasten aus der aktuellen Tastenbelegung."""
+        h = "<table cellspacing=0 cellpadding=4 width='100%'>"
+        i = 0
+        for aid, (a, text, default, _) in self.actions_reg.items():
+            k = a.shortcut().toString(QtGui.QKeySequence.SequenceFormat.NativeText) if a is not None else ""
+            if not k:
+                continue
+            k = k.replace("Space", "Leertaste").replace("Ctrl", "Strg").replace("Shift", "Umschalt")
+            bg = " style='background:#f3f7fd'" if i % 2 else ""
+            h += f"<tr{bg}><td width='42%' style='color:#6b7890'>{text}</td><td><b>{k}</b></td></tr>"
+            i += 1
+        return h + "</table>"
+
+    def open_manual(self):
+        ManualDialog(self).exec()
+
     def help_html(self):
         """Hilfe mit allen Bedienbefehlen; Tasten aus der aktuellen Tastenbelegung."""
         def key(aid):
@@ -1988,12 +2088,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     ("Nuten, Schlüsselflächen (Breite/SW, Tiefe, Z, C)", "rechts: Drehteil → Fräsen"),
                     ("Kegel 1:x, Normkegel (Morse, 7:24 …)", "Drehteil → Maßliste / Kontur, Spalte Info")])
         h += H("Alle Tasten")
-        rows = []
-        for aid, (a, text, default, _) in self.actions_reg.items():
-            k = key(aid)
-            if k:
-                rows.append((text, k))
-        h += table(rows)
+        h += self.keys_table_html()
         h += (f"<p style='color:#6b7890; margin-top:14px'>© 2026 Christian Diezinger · "
               f"<a href='{APP_URL}'>{APP_URL.replace('https://', '')}</a></p>")
         return h
@@ -4600,6 +4695,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---------------- Drehteil: Maßliste und Kontur ----------------
     def _build_lathe_tab(self):
         tabs = QtWidgets.QTabWidget()
+        self.lathe_tabs = tabs
         # Maßliste
         w1 = QtWidgets.QWidget()
         l1 = QtWidgets.QVBoxLayout(w1)

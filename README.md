@@ -87,5 +87,7 @@ Freie Software unter der [MIT-Lizenz](LICENSE): Nutzen, Weitergeben und Ändern 
 der Urheberhinweis muss erhalten bleiben. Ohne Gewähr – Maße für die Fertigung bitte
 immer mit der gültigen Zeichnung abgleichen.
 
-Die Demo-Datei `demo/Demo_Welle.s3d` ist frei erfunden und darf beliebig verwendet werden.
+Die Demo-Datei `demo/Demo_Welle.s3d` ist frei erfunden und darf beliebig verwendet werden
+(Drehkontur mit Fasen/Radien/Kegel, 6× M6, Querbohrung, Passfedernut, Schlüsselfläche,
+Schrägbohrungen 45°). Erzeugt wird sie mit `demo/generator/make_demo.py`.
 Das Logo liegt im Ordner `logo/` (SVG, PNG, ICO).

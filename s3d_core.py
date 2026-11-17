@@ -1348,6 +1348,41 @@ class Hole:
     thread_face: int = -1
 
 
+def _planar_end(model, faces, o, d, lo, hi):
+    """Schräg angeschnittene Bohrungsenden: liegt die Randkurve eines Endes in einer Ebene
+    (z. B. Schrägbohrung in eine Planfläche), wird der Durchstoßpunkt der Achse durch diese
+    Ebene zurückgegeben statt der Spitze der Ellipse. Ergebnis (lo, hi)."""
+    tris = np.concatenate([model.faces[i].triangles.reshape(-1, 3, 3) for i in faces])
+    key = np.round(tris.reshape(-1, 3), 4)
+    _, inv = np.unique(key, axis=0, return_inverse=True)
+    inv = inv.reshape(-1, 3)
+    E = np.sort(np.concatenate([inv[:, [0, 1]], inv[:, [1, 2]], inv[:, [2, 0]]]), axis=1)
+    uE, cnt = np.unique(E, axis=0, return_counts=True)
+    bnd = uE[cnt == 1]
+    if not len(bnd):
+        return lo, hi
+    P = np.zeros((inv.max() + 1, 3))
+    P[inv.ravel()] = tris.reshape(-1, 3)
+    mid = 0.5 * (lo + hi)
+    res = [lo, hi]
+    for side in (0, 1):
+        sel = bnd[(((P[bnd[:, 0]] - o) @ d) > mid) == bool(side)]
+        if len(sel) < 6:
+            continue
+        Q = P[np.unique(sel)]
+        c = Q.mean(0)
+        _, sv, vt = np.linalg.svd(Q - c)
+        n = vt[2]
+        if sv[2] > 1e-3 * max(sv[0], 1e-9) * len(Q) ** 0.5 or abs(n @ d) < 0.05:
+            continue
+        if abs(abs(n @ d) - 1) < 1e-6:
+            continue
+        a = ((c - o) @ n) / (d @ n)
+        if lo - 1e-6 <= a <= hi + 1e-6:
+            res[side] = float(a)
+    return res[0], res[1]
+
+
 def find_holes(model):
     thread_by_face = {}
     for ft in model.features.values():
@@ -1407,6 +1442,7 @@ def find_holes(model):
         for lo, hi, faces in clusters:
             if not any(model.faces[i].ftype == "CYLINDER" for i in faces):
                 continue
+            lo, hi = _planar_end(model, faces, o, d, lo, hi)
             eps = max(model.size * 2e-3, 0.2)
             p_lo, p_hi = o + (lo - eps) * d, o + (hi + eps) * d
             out_lo, out_hi = not inside(model, p_lo), not inside(model, p_hi)
@@ -1496,12 +1532,13 @@ def polar(p, o, d, e1, e2):
 
 @dataclass
 class HoleGroup:
-    kind: str                 # 'axial' | 'radial'
+    kind: str                 # 'axial' | 'radial' | 'inclined'
     holes: list               # Indizes in model._holes
     level: float              # Lage entlang der Hauptachse
-    radius: float             # Lochkreisradius (axial) bzw. 0 (radial)
+    radius: float             # Lochkreisradius (axial/schräg: Eintritt) bzw. 0 (radial)
     angles: list              # Winkel je Bohrung (°)
     tool_sign: int = 1
+    tilt: float = 0.0         # Schrägbohrung: Winkel Bohrungsachse zur Hauptachse (°)
 
 
 def hole_pattern(model, wcs):
@@ -1545,6 +1582,19 @@ def hole_pattern(model, wcs):
                     break
             else:
                 groups.append(HoleGroup("radial", [i], lvl, 0.0, [th]))
+        elif 0.5 <= ang <= 179.5:
+            # Schrägbohrung: Lage über Eintrittspunkt (Höhe, Radius, Winkel) + Neigung
+            r, th = polar(h.entry, o, d, e1, e2)
+            lvl = float((h.entry - o) @ d)
+            tilt = round(min(ang, 180.0 - ang), 3)
+            for g in groups:
+                if (g.kind == "inclined" and abs(g.level - lvl) < 0.5 and abs(g.radius - r) < 0.05
+                        and abs(g.tilt - tilt) < 0.05):
+                    g.holes.append(i)
+                    g.angles.append(th)
+                    break
+            else:
+                groups.append(HoleGroup("inclined", [i], lvl, r, [th], 1, tilt))
     for g in groups:
         order = np.argsort(g.angles)
         g.holes = [g.holes[k] for k in order]

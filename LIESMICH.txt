@@ -5,6 +5,14 @@ Dateien:   S3D_Viewer.pyw (Programm) + s3d_core.py (Geometrie-Kern) – beide im
 Starten:   S3D_Viewer.pyw doppelklicken (fehlende Pakete werden angeboten)
 EXE bauen: build.bat
 
+Neu in 3.2.2
+------------
+  Demo-Bauteil erweitert: Passfedernut 12×5 auf Ø40, Schlüsselfläche SW50 am Ø60 und drei
+  Schrägbohrungen Ø5 unter 45° von der Stirnseite (mittig, Ø29) nach innen in die Bohrung Ø20.
+  Erzeuger-Skript liegt unter demo\generator\make_demo.py.
+  Schrägbohrungen: Eintrittspunkt liegt jetzt exakt auf der Fläche (Achse ∩ Ebene) statt an der
+  Ellipsenspitze; das Bohrbild zeigt sie mit Winkel am Umfang und Neigung (∠45°).
+
 Neu in 3.2
 ----------
   Maßliste: neue Spalten „ab links“ und „ab rechts“ – Abstand von der Stirnfläche am kleinsten bzw.

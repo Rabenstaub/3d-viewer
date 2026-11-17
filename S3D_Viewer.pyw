@@ -87,7 +87,7 @@ from s3d_core import fmt
 
 APP_NAME = "3D Viewer"
 APP_URL = "https://github.com/Rabenstaub"
-APP_VERSION = "3.2.1"
+APP_VERSION = "3.2.2"
 
 # Beidseitige Beleuchtung: Kopflicht + Führungslicht + leichter Glanz
 _sh.Shaders.append(_sh.ShaderProgram("s3d_shaded", [
@@ -3407,9 +3407,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     p1 = p0 + L * ax
                     line([p0, p1], col=(0.25, 0.35, 0.55, 1.0), width=1.2)
                     items.append(self._arrow_item(p0, ax, m.size * 0.012))
+                    tl = f"  ∠{fmt(g.tilt, 2)}°" if g.kind == "inclined" else ""
                     self.pattern_callouts.append(self._callout(
-                        p1, f"{fmt(th, 2)}°  {dtxt_of(h)}", bg=self._annot_bg(), fg=QtGui.QColor("#000000")))
-                summary.append(f"Radial bei {fmt(g.level)} mm: " + ", ".join(fmt(x, 2) + "°" for x in g.angles))
+                        p1, f"{fmt(th, 2)}°  {dtxt_of(h)}{tl}", bg=self._annot_bg(), fg=QtGui.QColor("#000000")))
+                if g.kind == "inclined":
+                    summary.append(f"Schräg ∠{fmt(g.tilt, 2)}° bei {fmt(g.level)} mm, Ø{fmt(2 * g.radius)}: "
+                                   + ", ".join(fmt(x, 2) + "°" for x in g.angles))
+                else:
+                    summary.append(f"Radial bei {fmt(g.level)} mm: " + ", ".join(fmt(x, 2) + "°" for x in g.angles))
                 continue
             # 0°-Bezug
             line([c, c + R_lab * 0.98 * e1], col=col_ref, width=1.0)
@@ -4410,7 +4415,7 @@ class MainWindow(QtWidgets.QMainWindow):
             groups, (o, dm, e1, e2) = core.hole_pattern(self.model, self.wcs)
             for g in groups:
                 for h, th in zip(g.holes, g.angles):
-                    ang[h] = (th, g.radius if g.kind == "axial" else None)
+                    ang[h] = (th, g.radius if g.kind in ("axial", "inclined") else None)
         for i, h in enumerate(self.holes):
             e = self.wcs.to_wcs(h.entry)
             d = self.wcs.dir_to_wcs(h.axis_d)

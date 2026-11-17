@@ -1390,6 +1390,19 @@ def _line_surface_root(surf, o, d, t0, t1, n=64):
     return float(min(roots, key=lambda r: abs(r - mid)))
 
 
+def _point_in_face_range(f, p, eps=1e-3):
+    """Liegt der Punkt (auf der verlängerten Fläche) im Bereich, den die Fläche wirklich abdeckt?
+    Drehflächen: Lage entlang der eigenen Achse; Ebenen: Ausdehnung der Fläche."""
+    V = f.triangles.reshape(-1, 3)
+    s = f.surf
+    if isinstance(s, RevSurf):
+        a = (V - s.o) @ s.d
+        ap = float((p - s.o) @ s.d)
+        return a.min() - eps <= ap <= a.max() + eps
+    lo, hi = V.min(0) - eps, V.max(0) + eps
+    return bool(np.all(p >= lo) and np.all(p <= hi))
+
+
 def _axis_surface_end(model, faces, o, d, lo, hi):
     """Durchstoßpunkt der Bohrungsachse durch die angrenzende Fläche (Eintritt/Austritt).
     Bei schräg angeschnittenen Bohrungen (Planfläche, Kegel, Mantel, Radius) liegt der Rand der
@@ -1408,27 +1421,49 @@ def _axis_surface_end(model, faces, o, d, lo, hi):
     P[inv.ravel()] = tris.reshape(-1, 3)
     vf = _vertex_faces(model)
     own = set(faces)
-    mid = 0.5 * (lo + hi)
+    # Randkurven als zusammenhängende Schleifen; die Schleife mit dem tiefsten bzw. höchsten Punkt
+    # entlang der Achse ist der Austritt bzw. Eintritt (bei flachen Schrägbohrungen können sich
+    # die Bereiche von Ein- und Austritt entlang der Achse überlappen).
+    parent = {}
+
+    def root(v):
+        parent.setdefault(v, v)
+        while parent[v] != v:
+            parent[v] = parent[parent[v]]
+            v = parent[v]
+        return v
+    for x, y in bnd:
+        parent[root(int(x))] = root(int(y))
+    comps = {}
+    for x, y in bnd:
+        comps.setdefault(root(int(x)), []).append((int(x), int(y)))
+    hall = (P - o) @ d
     res = [lo, hi]
     for side in (0, 1):
-        sel = bnd[(((P[bnd[:, 0]] - o) @ d) > mid) == bool(side)]
-        if len(sel) < 8:
+        # Schleife, die den äußersten Punkt dieser Seite enthält
+        best_c, best_h = None, None
+        for cid, edges_ in comps.items():
+            vids = {v for e in edges_ for v in e}
+            hv = max(hall[list(vids)]) if side else min(hall[list(vids)])
+            if best_h is None or (hv > best_h if side else hv < best_h):
+                best_c, best_h = cid, hv
+        if best_c is None:
             continue
-        ids = np.unique(sel)
-        h = (P[ids] - o) @ d
+        ext = hall.max() if side else hall.min()
+        if abs(best_h - ext) > 1e-3:
+            continue                    # dieses Ende hat keinen Rand (z. B. Bohrspitze im Sackloch)
+        ids = np.array(sorted({v for e in comps[best_c] for v in e}))
+        if len(ids) < 8:
+            continue
+        h = hall[ids]
         if h.max() - h.min() < 1e-6:
             continue                    # Rand senkrecht zur Achse – Wert stimmt bereits
-        # nur ein einziger geschlossener Rand rund um die Achse zählt (keine Durchbrüche von Querbohrungen)
-        parent = {int(v): int(v) for v in ids}
-
-        def root(v):
-            while parent[v] != v:
-                parent[v] = parent[parent[v]]
-                v = parent[v]
-            return v
-        for x, y in sel:
-            parent[root(int(x))] = root(int(y))
-        if len({root(int(v)) for v in ids}) != 1:
+        # nur ein Rand, der die Bohrungsachse umschließt (kein Durchbruch einer Querbohrung)
+        e1_ = any_perp(d)
+        e2_ = np.cross(d, e1_)
+        Q = P[ids] - o
+        ang = np.degrees(np.arctan2(Q @ e2_, Q @ e1_))
+        if len(np.unique(np.floor(ang / 15.0).astype(int))) < 20:
             continue
         R = float(np.linalg.norm((P[ids] - o) - np.outer(h, d), axis=1).max())
         votes = {}
@@ -1438,13 +1473,22 @@ def _axis_surface_end(model, faces, o, d, lo, hi):
                     votes[j] = votes.get(j, 0) + 1
         if not votes:
             continue
-        j = max(votes, key=votes.get)
-        surf = model.faces[j].surf
-        if surf is None:
-            continue
-        a = _line_surface_root(surf, o, d, h.min() - 0.25 * R, h.max() + 0.25 * R)
-        if a is not None and h.min() - 1e-3 <= a <= h.max() + 1e-3:
-            res[side] = a
+        # Reicht die Bohröffnung über eine Kante (z. B. Kegel → Kugel), trifft die Achse nur EINE der
+        # Nachbarflächen wirklich: die, auf deren tatsächlichem Bereich der Durchstoßpunkt liegt.
+        best = None
+        for j in sorted(votes, key=votes.get, reverse=True):
+            surf = model.faces[j].surf
+            if surf is None:
+                continue
+            a_ = _line_surface_root(surf, o, d, h.min() - 0.25 * R, h.max() + 0.25 * R)
+            if a_ is None or not (h.min() - 1e-3 <= a_ <= h.max() + 1e-3):
+                continue
+            if not _point_in_face_range(model.faces[j], o + a_ * d):
+                continue
+            if best is None or votes[j] > best[0]:
+                best = (votes[j], a_)
+        if best is not None:
+            res[side] = best[1]
     return res[0], res[1]
 
 

@@ -987,7 +987,12 @@ class OptionsDialog(QtWidgets.QDialog):
         hl = QtWidgets.QVBoxLayout(hw)
         hl.setContentsMargins(0, 0, 0, 0)
         mb = QtWidgets.QPushButton("📖  Ausführliches Handbuch mit Bildern öffnen (F1)")
-        mb.clicked.connect(lambda: (self.reject(), win.open_manual()))
+        mb.clicked.connect(win.open_manual)
+        # F1 (bzw. die eingestellte Taste) wirkt auch, solange dieses Fenster offen ist
+        ka = win.actions_reg.get("help", (None,))[0]
+        seq = ka.shortcut() if ka is not None and not ka.shortcut().isEmpty() else QtGui.QKeySequence("F1")
+        self._help_sc = QtGui.QShortcut(seq, self)
+        self._help_sc.activated.connect(win.open_manual)
         hl.addWidget(mb)
         hb = QtWidgets.QTextBrowser()
         hb.setOpenExternalLinks(True)
@@ -2051,6 +2056,9 @@ class MainWindow(QtWidgets.QMainWindow):
         return h + "</table>"
 
     def open_manual(self):
+        mw = QtWidgets.QApplication.activeModalWidget()
+        if isinstance(mw, OptionsDialog):
+            mw.reject()          # Eigenschaften-Fenster sperrt sonst das Handbuch
         m = getattr(self, "_manual", None)
         if m is None:
             m = self._manual = ManualDialog(self)
@@ -2338,7 +2346,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def open_options(self, help_tab=False):
         dlg = OptionsDialog(self)
-        dlg.tabs.setCurrentIndex(0 if help_tab else 1)
+        dlg.tabs.setCurrentIndex(0)           # immer mit dem Reiter „Hilfe“ beginnen
         if dlg.exec():
             pct = dlg.ui_combo.currentData()
             if pct and int(pct) != self.ui_scale:

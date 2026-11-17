@@ -879,16 +879,30 @@ def help_dir():
     return None
 
 
-class ManualDialog(QtWidgets.QDialog):
-    """Ausführliches Handbuch mit Bildern: Inhaltsverzeichnis links, Text rechts, Suche."""
+class ManualDialog(QtWidgets.QWidget):
+    """Ausführliches Handbuch mit Bildern: Inhaltsverzeichnis links, Text rechts, Suche.
+    Eigenes, freies Fenster (nicht modal): kann neben dem Viewer offen bleiben, auf einen zweiten
+    Bildschirm gezogen und mit der Pinnadel immer im Vordergrund gehalten werden."""
 
     def __init__(self, win):
-        super().__init__(win)
+        super().__init__(None, Qt.WindowType.Window)
+        self.win = win
         self.setWindowTitle(f"{APP_NAME} – Handbuch")
+        self.setWindowIcon(win.windowIcon())
         self.resize(1180, 820)
-        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
+        g = win.settings.value("manual_geometry")
+        if g is not None:
+            try:
+                self.restoreGeometry(g)
+            except Exception:
+                pass
         lay = QtWidgets.QVBoxLayout(self)
         top = QtWidgets.QHBoxLayout()
+        self.pin = QtWidgets.QPushButton("📌 Immer im Vordergrund")
+        self.pin.setCheckable(True)
+        self.pin.setToolTip("Handbuch bleibt über dem Viewer, während du dort ausprobierst")
+        self.pin.toggled.connect(self._set_pin)
+        top.addWidget(self.pin)
         self.search = QtWidgets.QLineEdit()
         self.search.setPlaceholderText("Im Handbuch suchen … (Enter = weiter)")
         self.search.returnPressed.connect(self._find)
@@ -929,6 +943,17 @@ class ManualDialog(QtWidgets.QDialog):
             it.setData(Qt.ItemDataRole.UserRole, anchor)
             self.toc.addItem(it)
 
+    def _set_pin(self, on):
+        geo = self.geometry()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, bool(on))
+        self.setGeometry(geo)
+        self.show()
+        self.win.settings.setValue("manual_pin", bool(on))
+
+    def closeEvent(self, ev):
+        self.win.settings.setValue("manual_geometry", self.saveGeometry())
+        super().closeEvent(ev)
+
     def _find(self):
         t = self.search.text().strip()
         if t and not self.tb.find(t):
@@ -962,7 +987,7 @@ class OptionsDialog(QtWidgets.QDialog):
         hl = QtWidgets.QVBoxLayout(hw)
         hl.setContentsMargins(0, 0, 0, 0)
         mb = QtWidgets.QPushButton("📖  Ausführliches Handbuch mit Bildern öffnen (F1)")
-        mb.clicked.connect(lambda: ManualDialog(win).exec())
+        mb.clicked.connect(lambda: (self.reject(), win.open_manual()))
         hl.addWidget(mb)
         hb = QtWidgets.QTextBrowser()
         hb.setOpenExternalLinks(True)
@@ -1597,6 +1622,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def closeEvent(self, ev):
         self.settings.setValue("geometry", self.saveGeometry())
+        m = getattr(self, "_manual", None)
+        if m is not None:
+            m.close()
         super().closeEvent(ev)
 
     # ---------------- Datei ----------------
@@ -2023,7 +2051,16 @@ class MainWindow(QtWidgets.QMainWindow):
         return h + "</table>"
 
     def open_manual(self):
-        ManualDialog(self).exec()
+        m = getattr(self, "_manual", None)
+        if m is None:
+            m = self._manual = ManualDialog(self)
+            if str(self.settings.value("manual_pin", "false")).lower() in ("1", "true"):
+                m.pin.setChecked(True)
+        m.show()
+        if m.isMinimized():
+            m.showNormal()
+        m.raise_()
+        m.activateWindow()
 
     def help_html(self):
         """Hilfe mit allen Bedienbefehlen; Tasten aus der aktuellen Tastenbelegung."""

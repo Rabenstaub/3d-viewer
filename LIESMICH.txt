@@ -5,6 +5,25 @@ Dateien:   S3D_Viewer.pyw (Programm) + s3d_core.py (Geometrie-Kern) – beide im
 Starten:   S3D_Viewer.pyw doppelklicken (fehlende Pakete werden angeboten)
 EXE bauen: build.bat
 
+Neu in 3.3
+----------
+  Fertigungsangaben für die Arbeitsvorbereitung an Dreh-Fräszentren:
+  - Außermittige Bohrungen: Eintrittspunkt mit X (Ø), Y-Versatz, Z, C und B (roter Punkt,
+    Bohrbild, Bohrungstabelle).
+  - Bohrungen: Senkung/Stufe (Ø, Winkel, Tiefe), Bohrspitze (Winkel, Länge) und Tiefe bis
+    voller Ø; Maschinenwerte X Ø / Y / Z / C / B als eigene Spalten.
+  - Drehteil → Einstiche: Einstiche und Freistiche mit Breite, Tiefe, Ø, Grundradien,
+    Hinweis DIN 509 (Form E/F) bei 15°-Flanke mit Radius.
+  - Drehteil → Werkzeug: Abfallwinkel jedes Konturelements in −Z und +Z und welche Platte
+    (CNMG 80°, TNMG 60°, DNMG 55°, VBMT 35°) hinkommt; nicht erreichbare Stellen rot und per
+    Knopf im Bild markiert; größter Schneidenradius (Hohlkehlen), größte Einstechbreite.
+  - Drehteil → Fräsen: Nuten (Breite, Tiefe ab Ø, Länge, Z, C), Schlüsselflächen (SW) und
+    Abflachungen.
+  - Kegel: Verhältnis 1:x, Kegelwinkel, D/d/L und Normkegel (Morse MK0–6, 1:20, 7:24, 1:10,
+    1:50 …) in Maßliste und Kontur.
+  - Kugelige Spitzen (z. B. R5 am Indexbolzen) erscheinen jetzt in der Drehkontur.
+  - Demo-Welle: Einstich 3×1,5, Senkung 90° an den M6, außermittige Bohrung Ø6 (Y8).
+
 Neu in 3.2.2
 ------------
   Demo-Bauteil erweitert: Passfedernut 12×5 auf Ø40, Schlüsselfläche SW50 am Ø60 und drei

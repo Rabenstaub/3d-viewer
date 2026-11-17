@@ -87,7 +87,7 @@ from s3d_core import fmt
 
 APP_NAME = "3D Viewer"
 APP_URL = "https://github.com/Rabenstaub"
-APP_VERSION = "3.2.2"
+APP_VERSION = "3.3.0"
 
 # Beidseitige Beleuchtung: Kopflicht + Führungslicht + leichter Glanz
 _sh.Shaders.append(_sh.ShaderProgram("s3d_shaded", [
@@ -1356,7 +1356,9 @@ class MainWindow(QtWidgets.QMainWindow):
         hl = QtWidgets.QVBoxLayout(hw)
         hl.setContentsMargins(2, 2, 2, 2)
         self.hole_table = InfoTable(["Nr", "Ø", "Gewinde", "Gew.-Tiefe", "Kernloch-T.", "X", "Y", "Z", "I", "J", "K",
-                                     "Tiefe", "Art", "Winkel°", "Abst. Mitte", "Feature"])
+                                     "Tiefe", "Art", "Winkel°", "Abst. Mitte",
+                                     "Masch. X Ø", "Masch. Y", "Masch. Z", "C°", "B°", "Senkung/Stufe", "Spitze",
+                                     "Tiefe voller Ø", "Feature"])
         self.hole_table.itemSelectionChanged.connect(self.on_hole_row)
         self.hole_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         bt = QtWidgets.QPushButton("Als CSV speichern …")
@@ -1977,7 +1979,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     ("Nullpunkt setzen", "rechts im Reiter Nullpunkt"),
                     ("Alle Maße des Drehteils (Ø, Planflächen, Fasen, Radien)", "rechts: Drehteil → Maßliste"),
                     ("Drehkontur als Punktliste / DXF / G-Code", "rechts: Drehteil → Kontur "
-                                                                 "(Steuerung oben einstellen)")])
+                                                                 "(Steuerung oben einstellen)"),
+                    ("Eintritt schräger/radialer Bohrung (X Ø, Y, Z, C, B)",
+                     "roten Punkt in der Bohrung anklicken (Annotationen an, Transparent aus)"),
+                    ("Senkung, Bohrspitze, Tiefe bis voller Ø, Maschinenwerte", "rechts: Bohrungen"),
+                    ("Einstiche / Freistiche", "rechts: Drehteil → Einstiche"),
+                    ("Welche Platte kommt hin? (35°/55°/60°/80°)", "rechts: Drehteil → Werkzeug"),
+                    ("Nuten, Schlüsselflächen (Breite/SW, Tiefe, Z, C)", "rechts: Drehteil → Fräsen"),
+                    ("Kegel 1:x, Normkegel (Morse, 7:24 …)", "Drehteil → Maßliste / Kontur, Spalte Info")])
         h += H("Alle Tasten")
         rows = []
         for aid, (a, text, default, _) in self.actions_reg.items():
@@ -2742,9 +2751,11 @@ class MainWindow(QtWidgets.QMainWindow):
         ei = core.entry_info(self.model, h, self.wcs)
         dtxt = h.thread if h.thread else "Ø" + "/".join(fmt(x) for x in h.diameters)
         t = ei["tool"]
-        short = (f"Eintritt {dtxt}\nX {fmt(ei['dia'])}  (Ø)\nZ {fmt(ei['z'])}\n"
+        ytxt = f"Y {fmt(ei['y'])}\n" if abs(ei["y"]) > 1e-4 else ""
+        short = (f"Eintritt {dtxt}\nX {fmt(ei['dia'])}  (Ø)\n{ytxt}Z {fmt(ei['z'])}\n"
                  f"C {fmt(ei['c'], 3)}°   B {fmt(ei['b'], 3)}°")
         long = (f"Bohrungseintritt {dtxt} ({', '.join(h.features)}):  X {fmt(ei['dia'])} (Ø, r {fmt(ei['dia'] / 2)})"
+                + (f"  Y {fmt(ei['y'])} (außermittig)" if abs(ei["y"]) > 1e-4 else "") +
                 f"  Z {fmt(ei['z'])}  C {fmt(ei['c'], 3)}°  B {fmt(ei['b'], 3)}° zur Längsachse   ·   "
                 f"Punkt X {fmt(ei['wcs'][0])} Y {fmt(ei['wcs'][1])} Z {fmt(ei['wcs'][2])}   ·   "
                 f"Werkzeugrichtung ({fmt(t[0], 4)}, {fmt(t[1], 4)}, {fmt(t[2], 4)})   ·   Tiefe {fmt(h.depth)}")
@@ -3441,7 +3452,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Mantelbohrungen: kurzer Hinweisstrich mit Pfeil von der Bohrungsmitte nach außen
                 # und Beschriftungsfeld
                 L = m.size * 0.06
-                for h, th in zip(g.holes, g.angles):
+                offs = g.offsets or [0.0] * len(g.holes)
+                for h, th, yo in zip(g.holes, g.angles, offs):
                     hh = holes[h]
                     ax = np.asarray(hh.axis_d, float)
                     ax = ax / (np.linalg.norm(ax) or 1.0)
@@ -3450,13 +3462,17 @@ class MainWindow(QtWidgets.QMainWindow):
                     line([p0, p1], col=(0.25, 0.35, 0.55, 1.0), width=1.2)
                     items.append(self._arrow_item(p0, ax, m.size * 0.012))
                     tl = f"  ∠{fmt(g.tilt, 2)}°" if g.kind == "inclined" else ""
+                    if abs(yo) > 1e-4:
+                        tl += f"  Y {fmt(yo)}"
                     self.pattern_callouts.append(self._callout(
                         p1, f"{fmt(th, 2)}°  {dtxt_of(h)}{tl}", bg=self._annot_bg(), fg=QtGui.QColor("#000000")))
                 if g.kind == "inclined":
                     summary.append(f"Schräg ∠{fmt(g.tilt, 2)}° bei {fmt(g.level)} mm, Ø{fmt(2 * g.radius)}: "
                                    + ", ".join(fmt(x, 2) + "°" for x in g.angles))
                 else:
-                    summary.append(f"Radial bei {fmt(g.level)} mm: " + ", ".join(fmt(x, 2) + "°" for x in g.angles))
+                    summary.append(f"Radial bei {fmt(g.level)} mm: " + ", ".join(
+                        fmt(x, 2) + "°" + (f" (Y {fmt(yo)})" if abs(yo) > 1e-4 else "")
+                        for x, yo in zip(g.angles, g.offsets or [0.0] * len(g.angles))))
                 continue
             # 0°-Bezug
             line([c, c + R_lab * 0.98 * e1], col=col_ref, width=1.0)
@@ -4496,6 +4512,19 @@ class MainWindow(QtWidgets.QMainWindow):
                               fmt(core._float(p.get("thread-depth"))), fmt(core._float(p.get("thread-pitch")))))
         self.thread_table.set_rows(trows)
 
+    def _hole_machine_cols(self, h):
+        """Maschinenwerte (X Ø, Y, Z, C, B) und Senkung/Spitze einer Bohrung für die Tabelle."""
+        try:
+            ei = core.entry_info(self.model, h, self.wcs)
+            hd = core.hole_details(self.model, h)
+        except Exception:
+            return ("",) * 8
+        sk = "; ".join(f"{a} Ø{fmt(d)}" + (f" {fmt(w, 3)}°" if w else "") + f" T {fmt(t)}"
+                       for a, d, w, t in hd["sinks"])
+        tip = f"{fmt(hd['tip'][0], 3)}° L {fmt(hd['tip'][1])}" if hd["tip"] else ("durch" if h.through else "flach")
+        return (fmt(ei["dia"]), fmt(ei["y"]), fmt(ei["z"]), fmt(ei["c"], 3), fmt(ei["b"], 3), sk, tip,
+                fmt(hd["full"]))
+
     def _fill_holes(self):
         rows = []
         ang = {}
@@ -4515,6 +4544,7 @@ class MainWindow(QtWidgets.QMainWindow):
                          fmt(e[0]), fmt(e[1]), fmt(e[2]), fmt(d[0], 4), fmt(d[1], 4), fmt(d[2], 4),
                          fmt(h.depth), "durch" if h.through else "Sackloch",
                          fmt(th, 3) if th is not None else "", fmt(rr) if rr is not None else "",
+                         *self._hole_machine_cols(h),
                          ", ".join(h.features)))
         self.hole_table.set_rows(rows)
 
@@ -4655,6 +4685,81 @@ class MainWindow(QtWidgets.QMainWindow):
         lab.setWordWrap(True)
         l2.addWidget(lab)
         tabs.addTab(w2, "Kontur")
+        # Einstiche / Freistiche
+        w3 = QtWidgets.QWidget()
+        l3 = QtWidgets.QVBoxLayout(w3)
+        l3.setContentsMargins(2, 2, 2, 2)
+        self.groove_table = InfoTable(["Art", "Z von", "Z bis", "Breite", "Tiefe", "an Ø", "Grund Ø", "Radien im Grund",
+                                       "Hinweis"])
+        self.groove_table.itemSelectionChanged.connect(lambda: self._lathe_row_select(self.groove_table,
+                                                                                     self._groove_rows))
+        l3.addWidget(self.groove_table, 1)
+        b = QtWidgets.QPushButton("Als CSV speichern …")
+        b.clicked.connect(lambda: self._export_table(self.groove_table, "_Einstiche.csv", "Einstiche speichern"))
+        l3.addWidget(b)
+        lab = QtWidgets.QLabel("Einstich = Vertiefung zwischen zwei gleich hohen Stellen, Freistich = am Absatz. "
+                               "Breite auf Höhe der niedrigeren Kante, Tiefe ab dieser Kante. Zeile anklicken = Flächen zeigen.")
+        lab.setWordWrap(True)
+        l3.addWidget(lab)
+        tabs.addTab(w3, "Einstiche")
+        # Werkzeug-Erreichbarkeit
+        w4 = QtWidgets.QWidget()
+        l4 = QtWidgets.QVBoxLayout(w4)
+        l4.setContentsMargins(2, 2, 2, 2)
+        top = QtWidgets.QHBoxLayout()
+        self.tool_side = QtWidgets.QComboBox()
+        self.tool_side.addItems(["Außenkontur", "Innenkontur"])
+        self.tool_dir = QtWidgets.QComboBox()
+        self.tool_dir.addItems(["Vorschub −Z", "Vorschub +Z"])
+        self.tool_ins = QtWidgets.QComboBox()
+        for nm, e, kr in core.STD_INSERTS:
+            self.tool_ins.addItem(f"{nm}  (κ' {fmt(core.insert_clearance(e, kr), 1)}°)", nm)
+        self.tool_ins.setCurrentIndex(max(0, self.tool_ins.findData(self.settings.value("tool_ins", "DNMG 55° κ93°"))))
+        for cb in (self.tool_side, self.tool_dir, self.tool_ins):
+            cb.currentIndexChanged.connect(self._fill_tool_check)
+            top.addWidget(cb)
+        l4.addLayout(top)
+        self.tool_table = InfoTable(["Nr", "Element", "Z von", "Z bis", "fällt in −Z", "fällt in +Z",
+                                     "Platte −Z (mind.)", "Platte +Z (mind.)", "Schneidenradius max"])
+        self.tool_table.itemSelectionChanged.connect(lambda: self._lathe_row_select(self.tool_table, self._tool_rows))
+        l4.addWidget(self.tool_table, 1)
+        bl = QtWidgets.QHBoxLayout()
+        b = QtWidgets.QPushButton("Nicht erreichbare Stellen zeigen")
+        b.setToolTip("Wählt alle Flächen aus, die mit der gewählten Platte in der gewählten Richtung nicht gehen")
+        b.clicked.connect(self._show_tool_problems)
+        bl.addWidget(b)
+        b = QtWidgets.QPushButton("Als CSV speichern …")
+        b.clicked.connect(lambda: self._export_table(self.tool_table, "_Werkzeug.csv", "Werkzeugprüfung speichern"))
+        bl.addWidget(b)
+        l4.addLayout(bl)
+        self.tool_summary = QtWidgets.QLabel("")
+        self.tool_summary.setWordWrap(True)
+        l4.addWidget(self.tool_summary)
+        lab = QtWidgets.QLabel("„fällt“ = so steil läuft die Kontur in Vorschubrichtung vom Werkzeug weg. Die Platte "
+                               "braucht einen Nebeneinstellwinkel κ' = 180° − κr − ε, der größer ist (+2° Sicherheit). "
+                               "90° = Planfläche/Absatz: nur aus der Gegenrichtung oder mit Einstechwerkzeug. "
+                               "Hohlkehlen begrenzen den Schneidenradius. Rot = mit der gewählten Platte nicht erreichbar.")
+        lab.setWordWrap(True)
+        l4.addWidget(lab)
+        tabs.addTab(w4, "Werkzeug")
+        # Fräsmerkmale
+        w5 = QtWidgets.QWidget()
+        l5 = QtWidgets.QVBoxLayout(w5)
+        l5.setContentsMargins(2, 2, 2, 2)
+        self.mill_table = InfoTable(["Art", "Breite / SW", "Tiefe ab Ø", "an Ø", "Z von", "Z bis", "Länge", "C°",
+                                     "Boden ab Mitte", "Enden"])
+        self.mill_table.itemSelectionChanged.connect(lambda: self._lathe_row_select(self.mill_table, self._mill_rows))
+        l5.addWidget(self.mill_table, 1)
+        b = QtWidgets.QPushButton("Als CSV speichern …")
+        b.clicked.connect(lambda: self._export_table(self.mill_table, "_Fraesen.csv", "Fräsmerkmale speichern"))
+        l5.addWidget(b)
+        lab = QtWidgets.QLabel("Nut: Boden mit zwei Seitenwänden – Breite, Tiefe ab Außendurchmesser (Mitte Nut). "
+                               "Schlüsselfläche: zwei gegenüberliegende Flächen – SW. C° = Richtung der Bodennormalen "
+                               "(Werkzeug von dort). Zeile anklicken = Flächen zeigen.")
+        lab.setWordWrap(True)
+        l5.addWidget(lab)
+        tabs.addTab(w5, "Fräsen")
+        self._groove_rows, self._tool_rows, self._mill_rows = [], [], []
         self._dim_rows, self._cont_rows, self._lathe = [], [], None
         self.contour_items = []
         return tabs
@@ -4677,11 +4782,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dim_rows, self._cont_rows = [], []
         if self.model is None:
             self.dim_table.set_rows([]); self.cont_table.set_rows([])
+            self._lathe = None
+            self._fill_extra_lathe()
             return
         if not self._lathe_ok():
             self.dim_table.set_rows([("–", "Nullpunkt-Z liegt nicht auf der Längsachse – Reiter Nullpunkt → "
                                             "„Drehmaschine“ wählen", "", "", "", "", "", "")])
             self.cont_table.set_rows([])
+            self._lathe = None
+            self._fill_extra_lathe()
             return
         try:
             dims = core.dimension_list(self.model, self.wcs)
@@ -4729,7 +4838,105 @@ class MainWindow(QtWidgets.QMainWindow):
             hx = "X (R)" if xr else "X (Ø)"
             self.cont_table.setHorizontalHeaderLabels(["Nr", "Element", "Z", hx, "R", "Mitte Z",
                                                        "Mitte " + hx, "Drehsinn", "Info"])
+        self._fill_extra_lathe()
         self._show_contour_overlay()
+
+    def _fill_extra_lathe(self):
+        """Einstiche, Werkzeugprüfung und Fräsmerkmale."""
+        self._groove_rows, self._mill_rows = [], []
+        if self.model is None or not self._lathe:
+            for t in (self.groove_table, self.mill_table, self.tool_table):
+                t.set_rows([])
+            return
+        try:
+            g = core.grooves(self.model, self.wcs, self._lathe["outer"]) + \
+                core.grooves(self.model, self.wcs, self._lathe["inner"], inner=True)
+        except Exception as ex:
+            g = []
+            self.status.showMessage(f"Einstiche: {ex}")
+        for x in g:
+            if x["z0"] > x["z1"]:
+                x["z0"], x["z1"] = x["z1"], x["z0"]
+        g.sort(key=lambda x: x["z0"])
+        self._groove_rows = g
+        self.groove_table.set_rows([(x["kind"], fmt(x["z0"]), fmt(x["z1"]), fmt(x["width"]), fmt(x["depth"]),
+                                     fmt(x["dia"]), fmt(x["bottom"]),
+                                     ", ".join("R " + fmt(r) for r in x["radii"]), x["note"]) for x in g]
+                                   or [("–", "keine Einstiche gefunden", "", "", "", "", "", "", "")])
+        try:
+            mills = core.milling_features(self.model, self.wcs)
+        except Exception as ex:
+            mills = []
+            self.status.showMessage(f"Fräsmerkmale: {ex}")
+        self._mill_rows = mills
+        rows = []
+        for f in mills:
+            c = fmt(f["c"], 2) + (f" / {fmt(f['c2'], 2)}" if "c2" in f else "")
+            rows.append((f["kind"], ("SW " if f["kind"] == "Schlüsselfläche" else "") + (fmt(f["width"]) if f["width"] else "–"),
+                         fmt(f["depth"]), fmt(f["dia"]), fmt(f["z0"]), fmt(f["z1"]), fmt(f["length"]), c,
+                         fmt(f["h"]), f["ends"]))
+        self.mill_table.set_rows(rows or [("–", "keine Fräsmerkmale gefunden", "", "", "", "", "", "", "", "")])
+        self._fill_tool_check()
+
+    def _fill_tool_check(self, *_):
+        if not hasattr(self, "tool_table"):
+            return
+        self._tool_rows = []
+        if self.model is None or not self._lathe:
+            self.tool_table.set_rows([])
+            self.tool_summary.setText("")
+            return
+        self.settings.setValue("tool_ins", self.tool_ins.currentData())
+        inner = self.tool_side.currentIndex() == 1
+        elems = self._lathe["inner" if inner else "outer"]
+        try:
+            rows = core.tool_check(self.model, self.wcs, elems, inner=inner)
+        except Exception as ex:
+            self.tool_table.set_rows([("Fehler", str(ex))])
+            return
+        self._tool_rows = rows
+
+        def best(lst):
+            return lst[0] if lst else "keine – Gegenrichtung/Einstechen"
+        self.tool_table.set_rows([(r["nr"], r["elem"], fmt(r["z0"]), fmt(r["z1"]), fmt(r["dive_m"], 1) + "°",
+                                   fmt(r["dive_p"], 1) + "°", best(r["tools_m"]), best(r["tools_p"]),
+                                   ("≤ R " + fmt(r["rmax"])) if r["rmax"] else "") for r in rows])
+        key = "tools_m" if self.tool_dir.currentIndex() == 0 else "tools_p"
+        nm = self.tool_ins.currentData()
+        bad = [i for i, r in enumerate(rows) if nm not in r[key]]
+        red = QtGui.QColor(255, 205, 205)
+        for i in bad:
+            for c in range(self.tool_table.columnCount()):
+                it = self.tool_table.item(i, c)
+                if it is not None:
+                    it.setBackground(red)
+        rmax = [r["rmax"] for r in rows if r["rmax"]]
+        txt = (f"{nm}, {self.tool_dir.currentText()}: " +
+               ("ganze Kontur erreichbar." if not bad else
+                f"nicht erreichbar: Element {', '.join(str(rows[i]['nr']) for i in bad)}."))
+        if rmax:
+            txt += f"  Schneidenradius höchstens R {fmt(min(rmax))} (Hohlkehle)."
+        gw = [x["width"] for x in self._groove_rows if not x["kind"].endswith("innen")] if self._groove_rows else []
+        if gw and not inner:
+            txt += f"  Einstechbreite höchstens {fmt(min(gw))} mm."
+        self.tool_summary.setText(txt)
+
+    def _show_tool_problems(self):
+        if not self._tool_rows:
+            return
+        key = "tools_m" if self.tool_dir.currentIndex() == 0 else "tools_p"
+        nm = self.tool_ins.currentData()
+        faces = [r["face"] for r in self._tool_rows if nm not in r[key]]
+        if not faces:
+            self.status.showMessage("Alles erreichbar – nichts zu markieren.")
+            return
+        self.sel = [core.Entity(self.model, "face", f) for f in faces]
+        self._keep_tab = True
+        try:
+            self._refresh_selection()
+        finally:
+            self._keep_tab = False
+        self.status.showMessage(f"{len(faces)} Fläche(n) mit {nm} in {self.tool_dir.currentText()} nicht erreichbar.")
 
     def _lathe_row_select(self, table, rows):
         sel = table.selectionModel().selectedRows()
@@ -4737,8 +4944,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         ents = []
         for r in sel:
-            if r.row() < len(rows) and rows[r.row()].get("face") is not None:
-                ents.append(core.Entity(self.model, "face", rows[r.row()]["face"]))
+            if r.row() >= len(rows):
+                continue
+            row = rows[r.row()]
+            for fi in row.get("faces") or ([row["face"]] if row.get("face") is not None else []):
+                ents.append(core.Entity(self.model, "face", fi))
         if ents:
             self.sel = ents[:2] if len(ents) <= 2 else ents
             self._keep_tab = True

@@ -1,5 +1,6 @@
 """Erzeugt das neutrale Demo-Bauteil „Demo-Welle“ im .s3d-Format (frei erfunden, keine echten Daten).
 Drehkontur mit Fasen, Hohlkehle, Rundung, 30°-Kegel, Bohrung Ø20, 6× M6 auf LK Ø36, Querbohrung Ø8,
+Einstich 3×1,5 am Ø60, M6 mit Senkung 90°, außermittige Bohrung Ø6 (Y8),
 Passfedernut 12×5, Schlüsselfläche SW50 und zwei drei Schrägbohrungen Ø5 unter 45° von der Stirnseite.
 Aufruf: python make_demo.py <ziel.s3d>   (benötigt: numpy, manifold3d)"""
 import math, sys
@@ -19,7 +20,8 @@ r_end = 30 - 6 * T30
 prof = [(0, 10), (0, 19), (1, 20), (38, 20)]
 arc1 = [(c_conc[0] + R1 * math.sin(t), c_conc[1] - R1 * math.cos(t)) for t in np.linspace(0, math.pi / 2, 33)]
 prof += arc1[1:]
-prof += [(40, 29), (41, 30), (T1[0], 30)]
+GR_A0, GR_A1, GR_R = 43.0, 46.0, 28.5                      # Einstich 3 breit, 1,5 tief
+prof += [(40, 29), (41, 30), (GR_A0, 30), (GR_A0, GR_R), (GR_A1, GR_R), (GR_A1, 30), (T1[0], 30)]
 a0 = math.pi / 2; a1 = math.atan2(T2[1] - c_conv[1], T2[0] - c_conv[0])
 prof += [(c_conv[0] + R1 * math.cos(t), c_conv[1] + R1 * math.sin(t)) for t in np.linspace(a0, a1, 33)][1:]
 prof += [(85, r_end), (85, 10)]
@@ -45,6 +47,7 @@ def cyl_along(p0, d, r, length, segs=96):
 
 # ---------------- Bohrungen und Fräskonturen ----------------
 LK = 18.0; rh = 2.5; hb = 70.0
+SK_D = 0.7                                                # Senkung 90° auf Ø6,4
 tip = rh / math.tan(math.radians(59))
 cut = None
 thread_axes = []
@@ -52,6 +55,7 @@ for k in range(6):
     o = np.array([0.0, *(LK * radial(60 * k)[1:])])
     thread_axes.append(o)
     h = cyl_along(o + hb * X, X, rh, 16) + mf.Manifold.cylinder(tip, 0, rh, 96).rotate((0, 90, 0)).translate((hb - tip, o[1], o[2]))
+    h = h + mf.Manifold.cylinder(SK_D + 1.0, rh, rh + SK_D + 1.0, 96).rotate((0, 90, 0)).translate((85 - SK_D, o[1], o[2]))
     cut = h if cut is None else cut + h
 cut = cut + cyl_along(np.array([60.0, 0, 0]), np.array([0, 0, 1.0]), 4.0, 35, 128)            # Querbohrung Ø8
 # Passfedernut 12x5 (DIN 6885) oben auf Ø40, x 6..34, Grund z=15
@@ -73,6 +77,13 @@ for th in (60.0, 180.0, 300.0):
     d = (X - u) / math.sqrt(2.0)
     inc.append((p_entry, d, th))
     cut = cut + cyl_along(p_entry - 6.0 * d, d, INC_R, 6.0 + 14.0, 128)
+# außermittige Bohrung Ø6 von unten (C180°), Y-Versatz 8, Sackloch mit 118°-Spitze
+OF_P = np.array([75.0, 8.0, 0.0]); OF_R = 3.0
+OF_ENTRY = -math.sqrt(30.0 ** 2 - 8.0 ** 2)
+OF_BOT = OF_ENTRY + 10.0
+OF_TIP = OF_R / math.tan(math.radians(59))
+cut = cut + cyl_along(np.array([75.0, 8.0, -35.0]), np.array([0, 0, 1.0]), OF_R, OF_BOT + 35.0, 96) + \
+    mf.Manifold.cylinder(OF_TIP, OF_R, 0, 96).translate((75.0, 8.0, OF_BOT))
 body = body - cut
 mesh = body.to_mesh()
 V = np.asarray(mesh.vert_properties)[:, :3].astype(float)
@@ -93,16 +104,23 @@ F_c20 = add(kind="CYL", R=20, alo=1, ahi=38, conc="0", col=GREY)
 F_hk = add(kind="TORUS", c=c_conc, r=R1, alo=38, ahi=40, conc="1", col=ORANGE)
 F_sh = add(kind="PLANE", x0=40, rlo=22, rhi=29, col=GREY)
 F_ch2 = add(kind="CONE", pA=np.array([40, 29.0]), pB=np.array([41, 30.0]), conc="0", col=ORANGE)
-F_c30 = add(kind="CYL", R=30, alo=41, ahi=T1[0], conc="0", col=GREY)
+F_c30 = add(kind="CYL", R=30, alo=41, ahi=GR_A0, conc="0", col=GREY)
+F_g0 = add(kind="PLANE", x0=GR_A0, rlo=GR_R, rhi=30, col=BLUE)
+F_gb = add(kind="CYL", R=GR_R, alo=GR_A0, ahi=GR_A1, conc="0", col=BLUE)
+F_g1 = add(kind="PLANE", x0=GR_A1, rlo=GR_R, rhi=30, col=BLUE)
+F_c30b = add(kind="CYL", R=30, alo=GR_A1, ahi=T1[0], conc="0", col=GREY)
 F_rd = add(kind="TORUS", c=c_conv, r=R1, alo=T1[0], ahi=T2[0], conc="0", col=ORANGE)
 F_k30 = add(kind="CONE", pA=T2.copy(), pB=np.array([85, r_end]), conc="0", col=GREY)
 F_back = add(kind="PLANE", x0=85, rlo=10, rhi=r_end, col=GREY)
 F_bore = add(kind="CYL", R=10, alo=0, ahi=85, conc="1", col=LIGHT)
 hole_faces = []
 for o in thread_axes:
-    hc = add(kind="HCYL", o=o, R=rh, alo=hb, ahi=85, col=ORANGE, conc="1")
+    hc = add(kind="HCYL", o=o, R=rh, alo=hb, ahi=85 - SK_D, col=ORANGE, conc="1")
     ht = add(kind="HCONE", o=o, R=rh, alo=hb - tip, ahi=hb, col=ORANGE, conc="1")
-    hole_faces.append((hc, ht, o))
+    hs = add(kind="HSINK", o=o, R=rh, alo=85 - SK_D, ahi=85, col=ORANGE, conc="1")
+    hole_faces.append((hc, ht, o, hs))
+F_of = add(kind="LCYL", o=OF_P, d=np.array([0, 0, 1.0]), R=OF_R, tlo=OF_ENTRY - 1e-3 - 0.0 - 1.0, thi=OF_BOT, col=ORANGE, conc="1")
+F_oft = add(kind="LTIP", o=OF_P, d=np.array([0, 0, 1.0]), R=OF_R, tlo=OF_BOT, thi=OF_BOT + OF_TIP, col=ORANGE, conc="1")
 F_rad = add(kind="LCYL", o=np.array([60.0, 0, 0]), d=np.array([0, 0, 1.0]), R=4.0, tlo=0, thi=35, col=ORANGE, conc="1")
 # Passfedernut
 F_kw_s = [add(kind="PLANE_N", n=np.array([0, sg, 0.0]), off=KW_B, box=((KW_X0, KW_X1), None, (KW_Z, 21)), col=BLUE,
@@ -147,6 +165,15 @@ def residual(f, P):
         if t.min() < f["tlo"] - eps or t.max() > f["thi"] + eps: return np.inf
         if "side" in f and (np.sign(q[:, 0] + f["side"] * 1e-6) != f["side"]).any(): return np.inf
         return np.abs(np.linalg.norm(q - np.outer(t, f["d"]), axis=1) - f["R"]).max()
+    if k == "HSINK":
+        q = P - f["o"]; ah = q[:, 0]; rr = np.hypot(q[:, 1], q[:, 2])
+        if ah.min() < f["alo"] - eps or ah.max() > f["ahi"] + eps: return np.inf
+        return np.abs(rr - (f["R"] + (ah - f["alo"]))).max() / math.sqrt(2)
+    if k == "LTIP":
+        q = P - f["o"]; t = q @ f["d"]
+        if t.min() < f["tlo"] - eps or t.max() > f["thi"] + eps: return np.inf
+        rr = np.linalg.norm(q - np.outer(t, f["d"]), axis=1)
+        return np.abs(rr - f["R"] * (f["thi"] - t) / (f["thi"] - f["tlo"])).max()
     if k == "PLANE_N":
         for ax, rng in enumerate(f["box"]):
             if rng is not None and (P[:, ax].min() < rng[0] - eps or P[:, ax].max() > rng[1] + eps): return np.inf
@@ -180,15 +207,18 @@ def fidx(f):
 circle_pairs = set()
 for (a, r), fa, fb in [((0, 10), F_front, F_bore), ((0, 19), F_front, F_ch1), ((1, 20), F_ch1, F_c20),
                       ((38, 20), F_c20, F_hk), ((40, 22), F_hk, F_sh), ((40, 29), F_sh, F_ch2),
-                      ((41, 30), F_ch2, F_c30), (tuple(T1), F_c30, F_rd), (tuple(T2), F_rd, F_k30),
+                      ((41, 30), F_ch2, F_c30), ((GR_A0, 30), F_c30, F_g0), ((GR_A0, GR_R), F_g0, F_gb), ((GR_A1, GR_R), F_gb, F_g1),
+                      ((GR_A1, 30), F_g1, F_c30b), (tuple(T1), F_c30b, F_rd), (tuple(T2), F_rd, F_k30),
                       ((85, r_end), F_k30, F_back), ((85, 10), F_back, F_bore)]:
     link(circle_edge((a, 0, 0), X, r), fa, fb)
     circle_pairs.add(frozenset((fidx(fa), fidx(fb))))
 thread_edges = []
-for hc, ht, o in hole_faces:
-    e_in = circle_edge(o + 85 * X, X, rh); link(e_in, F_back, hc); thread_edges.append(e_in)
+for hc, ht, o, hs in hole_faces:
+    link(circle_edge(o + 85 * X, X, rh + SK_D), F_back, hs)
+    e_in = circle_edge(o + (85 - SK_D) * X, X, rh); link(e_in, hs, hc); thread_edges.append(e_in)
     link(circle_edge(o + hb * X, X, rh), hc, ht)
-    circle_pairs.add(frozenset((fidx(F_back), fidx(hc))))
+    circle_pairs.add(frozenset((fidx(F_back), fidx(hs))))
+    circle_pairs.add(frozenset((fidx(hs), fidx(hc))))
     circle_pairs.add(frozenset((fidx(hc), fidx(ht))))
 # alle übrigen Flächengrenzen (Nut, Schlüsselfläche, Bohrungen) als Freiform-Kanten aus dem Netz
 E = np.sort(np.stack([Tr[:, [0, 1]], Tr[:, [1, 2]], Tr[:, [2, 0]]], axis=1).reshape(-1, 2), axis=1)
@@ -230,8 +260,9 @@ for i, f in enumerate(faces):
 axes = [("Axis-1", (0, 0, 0), (1, 0, 0))]
 def new_axis(o, d):
     aid = f"Axis-{len(axes)+1}"; axes.append((aid, tuple(o), tuple(d))); return aid
-for hc, ht, o in hole_faces:
-    hc["axis"] = ht["axis"] = new_axis(o, (1, 0, 0))
+for hc, ht, o, hs in hole_faces:
+    hc["axis"] = ht["axis"] = hs["axis"] = new_axis(o, (1, 0, 0))
+F_of["axis"] = F_oft["axis"] = new_axis(OF_P, (0, 0, 1))
 F_rad["axis"] = new_axis((60, 0, 0), (0, 0, 1))
 for f in F_kw_e:
     f["axis"] = new_axis(f["o"], (0, 0, 1))
@@ -244,6 +275,10 @@ def feat(name, typ, params=None):
     fid = f"Feature-{len(features)+1}"
     features.append(dict(id=fid, name=name, type=typ, params=params or {})); return fid
 F_rad["feat"] = feat("Querbohrung Ø8", "SIMPLE HOLE")
+F_of["feat"] = F_oft["feat"] = feat("Bohrung Ø6 außermittig (Y8)", "SIMPLE HOLE")
+gr = feat("Einstich 3x1,5", "REVOLVE")
+for f in (F_g0, F_gb, F_g1):
+    f["feat"] = gr
 kw = feat("Passfedernut 12x5 (DIN 6885)", "POCKET")
 for f in F_kw_s + [F_kw_b] + F_kw_e:
     f["feat"] = kw
@@ -252,9 +287,9 @@ for f in F_fl + F_flw:
     f["feat"] = fl
 for i, f in enumerate(F_inc):
     f["feat"] = feat(f"Schrägbohrung Ø5 45° ({i+1})", "SIMPLE HOLE")
-for k, (hc, ht, o) in enumerate(hole_faces):
+for k, (hc, ht, o, hs) in enumerate(hole_faces):
     fid = feat(f"Gewindebohrung M6 ({k+1})", "SIMPLE HOLE")
-    hc["feat"] = ht["feat"] = fid
+    hc["feat"] = ht["feat"] = hs["feat"] = fid
     feat(f"M6x1 Gewinde ({k+1})", "SYMBOLIC_THREAD",
          {"thread-description": "M6x1", "threaded-face": hc["id"], "start-edge": thread_edges[k]["id"],
           "thread-depth": "12", "thread-pitch": "1", "tapped-diameter": "5", "thread-angle": "60",
@@ -274,7 +309,7 @@ L = []; w = L.append
 w('<?xml version="1.0" encoding="utf-8"?>')
 w('<!-- Demo-Bauteil für 3D Viewer – frei erfunden, frei verwendbar, keine echten Konstruktionsdaten -->')
 w('<classmate-cad version="2.0">')
-w('  <identifier>DEMO-WELLE-002</identifier>\n  <system>3D Viewer Demo</system>\n  <date>2026.11.17 12:00:00</date>')
+w('  <identifier>DEMO-WELLE-003</identifier>\n  <system>3D Viewer Demo</system>\n  <date>2026.11.17 12:00:00</date>')
 w('  <configurations><configuration><type>geometry</type><identifier>demo</identifier><views><view>'
   '<name>CLASSMATE</name><type>CLASSMATE</type>'
   '<transform>[(1.0,0.0,0.0,0.0);(0.0,-0.889,-0.458,0.0);(0.0,0.458,-0.889,0.0);(0.0,0.0,0.0,1.0)]</transform>'
@@ -308,7 +343,7 @@ for e in edges:
     w('        </edge>')
 w('      </edges>\n      <faces>')
 TYPE = {"PLANE": "PLANE", "PLANE_N": "PLANE", "CYL": "CYLINDER", "CONE": "CONE", "TORUS": "TORUS",
-        "HCYL": "CYLINDER", "HCONE": "CONE", "LCYL": "CYLINDER"}
+        "HCYL": "CYLINDER", "HCONE": "CONE", "LCYL": "CYLINDER", "HSINK": "CONE", "LTIP": "CONE"}
 for fi, f in enumerate(faces):
     tri = P[assign == fi]
     w(f'        <face><id>{f["id"]}</id><face-type>{TYPE[f["kind"]]}</face-type>')
@@ -322,8 +357,10 @@ for fi, f in enumerate(faces):
         ang = math.degrees(math.atan2(abs(pB[1] - pA[1]), abs(pB[0] - pA[0])))
         w(f'          <start-position>{pA[0]:.6g}</start-position><end-position>{pB[0]:.6g}</end-position>'
           f'<radius1>{pA[1]:.6g}</radius1><radius2>{pB[1]:.6g}</radius2><angle>{ang:.6g}</angle>')
-    if f["kind"] == "HCONE":
+    if f["kind"] in ("HCONE", "LTIP"):
         w(f'          <radius1>{f["R"]:.6g}</radius1><radius2>0</radius2><angle>59</angle>')
+    if f["kind"] == "HSINK":
+        w(f'          <radius1>{f["R"] + SK_D:.6g}</radius1><radius2>{f["R"]:.6g}</radius2><angle>45</angle>')
     if f["kind"] == "TORUS":
         w(f'          <radius1>{f["c"][1]+f["r"]:.6g}</radius1><radius2>{f["c"][1]-f["r"]:.6g}</radius2>')
     fa = 180 if "side" in f else 360

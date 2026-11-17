@@ -1604,6 +1604,7 @@ class HoleGroup:
     angles: list              # Winkel je Bohrung (°)
     tool_sign: int = 1
     tilt: float = 0.0         # Schrägbohrung: Winkel Bohrungsachse zur Hauptachse (°)
+    offsets: list = None      # radial: Y-Versatz je Bohrung (außermittig, 0 = durch die Mitte)
 
 
 def hole_pattern(model, wcs):
@@ -1630,23 +1631,19 @@ def hole_pattern(model, wcs):
             else:
                 groups.append(HoleGroup("axial", [i], lvl, r, [th], sg))
         elif abs(ang - 90) < 0.5:
-            cl = _closest_line_line(h.axis_p, h.axis_d, o, d)
-            if cl is None or np.linalg.norm(cl[0] - cl[1]) > 0.05:
-                continue
-            # Lage der Bohrung am Umfang: von der Mittelachse zum Eintrittspunkt
-            q = h.entry - o
-            q = q - (q @ d) * d
-            if np.linalg.norm(q) < 1e-6:
-                q = h.axis_d
-            th = round(math.degrees(math.atan2(q @ e2, q @ e1)), 4) % 360.0
-            lvl = float((cl[1] - o) @ d)
+            # Lage am Umfang aus der Werkzeugrichtung (C), außermittig mit Y-Versatz
+            ei = entry_info(model, h, wcs)
+            th = round(ei["c"], 4) % 360.0
+            y = round(ei["y"], 4)
+            lvl = float((h.entry - o) @ d)
             for g in groups:
                 if g.kind == "radial" and abs(g.level - lvl) < 0.5:
                     g.holes.append(i)
                     g.angles.append(th)
+                    g.offsets.append(y)
                     break
             else:
-                groups.append(HoleGroup("radial", [i], lvl, 0.0, [th]))
+                groups.append(HoleGroup("radial", [i], lvl, 0.0, [th], offsets=[y]))
         elif 0.5 <= ang <= 179.5:
             # Schrägbohrung: Lage über Eintrittspunkt (Höhe, Radius, Winkel) + Neigung
             r, th = polar(h.entry, o, d, e1, e2)
@@ -1664,24 +1661,73 @@ def hole_pattern(model, wcs):
         order = np.argsort(g.angles)
         g.holes = [g.holes[k] for k in order]
         g.angles = [g.angles[k] for k in order]
+        if g.offsets is not None:
+            g.offsets = [g.offsets[k] for k in order]
     groups.sort(key=lambda g: (g.kind, g.level))
     return groups, (o, d, e1, e2)
 
 
 def entry_info(model, h, wcs):
-    """Eintrittspunkt einer Bohrung für die Maschine: Lage im Nullpunkt-KS (X als Durchmesser
-    um die Längsachse, Z), Winkel am Umfang (C) und Neigung der Bohrungsachse zur Längsachse (B)."""
+    """Eintrittspunkt einer Bohrung für die Maschine (Dreh-Fräszentrum mit C-, Y- und B-Achse).
+    Die C-Lage wird so gewählt, dass die Bohrung von „oben“ (+X der Maschine) angefahren wird:
+    X = Ø-Wert in dieser Lage, Y = Versatz außermittiger Bohrungen, Z = Lage auf der Längsachse,
+    B = Neigung der Bohrungsachse zur Längsachse (90° = radial, 0° = axial)."""
     o, d = main_axis(model)
     e1, e2 = angle_frame(d, wcs)
     p = np.asarray(h.entry, float)
     q = p - o
-    r = float(np.linalg.norm(q - (q @ d) * d))
-    c = math.degrees(math.atan2(q @ e2, q @ e1)) % 360.0 if r > 1e-6 else 0.0
-    pw = wcs.to_wcs(p)
+    qr = q - (q @ d) * d
     tool = -unit(h.axis_d)              # Werkzeugrichtung: von außen ins Material
+    tr = tool - (tool @ d) * d
+    if np.linalg.norm(tr) > 1e-6:
+        eo = unit(-tr)                  # von dort kommt das Werkzeug
+    elif np.linalg.norm(qr) > 1e-6:
+        eo = unit(qr)                   # axiale Bohrung: Lage am Lochkreis
+    else:
+        eo = e1
+    ey = np.cross(d, eo)
+    xr = float(qr @ eo)
+    y = float(qr @ ey)
+    if abs(y) < 1e-6:
+        y = 0.0
+    c = math.degrees(math.atan2(eo @ e2, eo @ e1)) % 360.0
+    pw = wcs.to_wcs(p)
     b = math.degrees(math.acos(max(-1.0, min(1.0, abs(float(tool @ d))))))
-    return {"point": p, "dia": 2 * r, "z": float(pw[2]), "c": c, "b": b,
+    return {"point": p, "dia": 2 * xr, "y": y, "z": float(pw[2]), "c": c, "b": b,
             "wcs": pw, "tool": wcs.dir_to_wcs(tool)}
+
+
+def hole_details(model, h):
+    """Senkung/Stufe am Eintritt und Bohrspitze am Grund einer Bohrung.
+    Ergebnis: dict(sinks=[(art, Ø, Winkel oder None, Tiefe ab Eintritt)], tip=(Winkel, Länge) oder None,
+    full=Tiefe bis voller Ø (ohne Spitze), bore=Nenn-Ø)."""
+    o, d = h.axis_p, unit(h.axis_d)
+    ae = float((h.entry - o) @ d)
+    info = []
+    for i in h.faces:
+        f = model.faces[i]
+        V = f.triangles.reshape(-1, 3) - o
+        a = V @ d
+        rho = np.linalg.norm(V - np.outer(a, d), axis=1)
+        info.append((i, f, a.min(), a.max(), rho.min(), rho.max()))
+    cyl = [x for x in info if x[1].ftype == "CYLINDER"]
+    if not cyl:
+        return {"sinks": [], "tip": None, "full": h.depth, "bore": None}
+    r_bore = min(x[1].surf.radius for x in cyl)
+    sinks, tip = [], None
+    for i, f, a0, a1, r0, r1 in info:
+        if f.ftype == "CONE":
+            half = getattr(f.surf, "half_angle", None)
+            if r0 < 0.05 * r_bore + 1e-3:
+                L = a1 - a0
+                tip = (2 * half if half else 2 * math.degrees(math.atan2(r1, L)), L)
+            elif r1 > r_bore + 1e-3 and abs(a1 - ae) < max(r1, 0.5):
+                sinks.append(("Senkung", 2 * r1, 2 * half if half else None, ae - a0))
+        elif f.ftype == "CYLINDER" and f.surf.radius > r_bore + 1e-3:
+            sinks.append(("Stufe", 2 * f.surf.radius, None, ae - a0))
+    sinks.sort(key=lambda x: -x[1])
+    full = h.depth - (tip[1] if tip else 0.0)
+    return {"sinks": sinks, "tip": tip, "full": full, "bore": 2 * r_bore}
 
 
 def entry_surface(model, h):
@@ -1893,6 +1939,16 @@ def arc_profile(model, fi, wcs=None):
                 c1, c2 = m_ + k * nn, m_ - k * nn
                 c = c1 if np.linalg.norm(c1 - cfit) < np.linalg.norm(c2 - cfit) else c2
                 r = rfit
+    if len(ends) == 1 and abs(cfit[1]) < max(1e-2 * rfit, 2e-3):
+        # Kugel mit Mittelpunkt auf der Achse (z. B. Spitze R5): zweiter Endpunkt ist der Pol auf der Achse
+        p1, n1 = ends[0]
+        c = np.array([cfit[0], 0.0])
+        if n1 is not None and abs(n1[0]) > 1e-9:
+            c = np.array([p1[0] - p1[1] * n1[0] / n1[1], 0.0]) if abs(n1[1]) > 1e-9 else c
+        r = float(np.linalg.norm(p1 - c))
+        sgn = 1.0 if av.mean() > c[0] else -1.0
+        ends.append((np.array([c[0] + sgn * r, 0.0]), None))
+        exact = n1 is not None
     pts = sorted([e[0] for e in ends], key=lambda p: -p[0])
     return {"o": o, "d": d, "c": np.asarray(c, float), "r": float(r), "ends": pts, "exact": exact,
             "concave": f.concavity == "1"}
@@ -2216,6 +2272,8 @@ def contour_rows(model, wcs, elems):
             L = float(np.linalg.norm(q1 - q0))
             r["elem"] = "Fase" if L < 3.0 else "Kegel"
             r["info"] = f"{fmt(s['angle'], 3)}° zur Achse, Länge {fmt(L)}"
+            if L >= 3.0:
+                r["info"] += " · " + taper_text(taper_info(s["angle"], 2 * q0[1], 2 * q1[1], abs(q1[0] - q0[0])))
         elif k == "ARC":
             r["elem"] = "Radius"
             r["r"] = s["r"]
@@ -2251,8 +2309,11 @@ def dimension_list(model, wcs):
         elif s["kind"] == "CONE":
             L = float(np.linalg.norm(s["p1"] - s["p0"]))
             d0, d1 = 2 * s["p0"][1], 2 * s["p1"][1]
+            inf = f"Ø {fmt(min(d0, d1))} … Ø {fmt(max(d0, d1))} · {side}"
+            if L >= 3.0:
+                inf += " · " + taper_text(taper_info(s["angle"], d0, d1, z1 - z0))
             out.append(dict(typ="Fase" if L < 3.0 else "Kegel", wert=f"{fmt(s['angle'], 3)}°", z0=z0, z1=z1, L=z1 - z0,
-                            info=f"Ø {fmt(min(d0, d1))} … Ø {fmt(max(d0, d1))} · {side}", face=s["face"], key=(2, 0)))
+                            info=inf, face=s["face"], key=(2, 0)))
         elif s["kind"] == "ARC":
             out.append(dict(typ="Radius", wert=f"R {fmt(s['r'])}", z0=z0, z1=z1, L=z1 - z0,
                             info=f"Mitte Z {fmt(Z(s['c'][0]))} · X Ø {fmt(2 * s['c'][1])} · "
@@ -2260,6 +2321,289 @@ def dimension_list(model, wcs):
                             face=s["face"], key=(3, 0)))
     out.sort(key=lambda d: (-d["z1"], d["key"]))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Fertigungsmerkmale: Kegel, Einstiche, Werkzeug-Erreichbarkeit, Fräsmerkmale
+# ---------------------------------------------------------------------------
+
+STD_TAPERS = [  # (Name, Verhältnis 1:x, Bezugs-Ø groß oder None)
+    ("Morsekegel MK0", 19.212, 9.045), ("Morsekegel MK1", 20.047, 12.065), ("Morsekegel MK2", 20.020, 17.780),
+    ("Morsekegel MK3", 19.922, 23.825), ("Morsekegel MK4", 19.254, 31.267), ("Morsekegel MK5", 19.002, 44.399),
+    ("Morsekegel MK6", 19.180, 63.348), ("Metrischer Kegel 1:20", 20.0, None), ("Steilkegel 7:24 (SK/ISO/BT)", 24 / 7, None),
+    ("HSK 1:10", 10.0, None), ("Kegelstift 1:50", 50.0, None), ("Kegel 1:30", 30.0, None), ("Kegel 1:16 (Rohrgewinde)", 16.0, None),
+    ("Kegel 1:5", 5.0, None), ("Kegel 1:3", 3.0, None),
+]
+
+
+def taper_info(half_angle, d0, d1, L):
+    """Kegel nach Norm: Verhältnis 1:x, Kegelwinkel, D/d/L und – falls passend – Normkegel."""
+    t = math.tan(math.radians(half_angle))
+    D, d = max(d0, d1), min(d0, d1)
+    out = {"D": D, "d": d, "L": L, "angle": 2 * half_angle, "half": half_angle,
+           "x": (1 / (2 * t)) if t > 1e-9 else None, "norm": ""}
+    if out["x"] is None:
+        return out
+    best = None
+    for name, x, Dn in STD_TAPERS:
+        dev = abs(out["x"] - x) / x
+        if dev < 0.006:
+            score = dev + (0 if Dn is None else min(abs(D - Dn), abs(d - Dn)) / 50.0)
+            if Dn is not None and min(abs(D - Dn), abs(d - Dn)) > 3.0:
+                continue
+            if best is None or score < best[0]:
+                best = (score, name)
+    if best:
+        out["norm"] = best[1]
+    return out
+
+
+def taper_text(ti):
+    if ti.get("x") is None:
+        return ""
+    x = ti["x"]
+    ratio = f"Kegel 1:{fmt(x, 3)} · " if ti["half"] <= 20.0 else ""
+    s = f"{ratio}Kegelwinkel {fmt(ti['angle'], 3)}° (α/2 {fmt(ti['half'], 3)}°) · D {fmt(ti['D'])} d {fmt(ti['d'])} L {fmt(ti['L'])}"
+    if ti["norm"]:
+        s += f" · ≈ {ti['norm']}"
+    return s
+
+
+def _profile_samples(elems, n_arc=12):
+    """Kontur als Punktfolge (a, rho, Element-Index)."""
+    pts = []
+    for k, (s, f) in enumerate(elems):
+        q0, q1 = _oriented(s, f)
+        if s["kind"] == "ARC":
+            c = s["c"]
+            a0 = math.atan2(q0[1] - c[1], q0[0] - c[0])
+            a1 = math.atan2(q1[1] - c[1], q1[0] - c[0])
+            am = math.atan2(s["mid"][1] - c[1], s["mid"][0] - c[0])
+            da = (a1 - a0) % (2 * math.pi)
+            if (am - a0) % (2 * math.pi) > da:
+                da -= 2 * math.pi
+            for t in np.linspace(0, 1, n_arc + 1):
+                pts.append((c[0] + s["r"] * math.cos(a0 + t * da), c[1] + s["r"] * math.sin(a0 + t * da), k))
+        else:
+            pts.append((q0[0], q0[1], k))
+            pts.append((q1[0], q1[1], k))
+    return pts
+
+
+def grooves(model, wcs, elems, inner=False, tol=0.02):
+    """Einstiche/Freistiche: Bereiche, in denen die Kontur unter die „Hüllkontur“ fällt
+    (außen tiefer als beide Seiten, innen weiter als beide Seiten)."""
+    if not elems:
+        return []
+    mo, md = main_axis(model)
+    Z = lambda a: float(wcs.to_wcs(mo + a * md)[2])
+    P = _profile_samples(elems)
+    sg = -1.0 if inner else 1.0
+    r = np.array([sg * p[1] for p in P])
+    n = len(r)
+    lm = np.maximum.accumulate(r)
+    rm = np.maximum.accumulate(r[::-1])[::-1]
+    env = np.minimum(lm, rm)
+    below = r < env - tol
+    out = []
+    i = 0
+    while i < n:
+        if not below[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and below[j + 1]:
+            j += 1
+        L, R = i - 1, j + 1
+        if L < 0 or R >= n:
+            i = j + 1
+            continue
+        E = min(lm[L], rm[R])
+        # Kanten auf Höhe E (linear zwischen den Stützpunkten)
+        def cross(k0, k1):
+            r0, r1 = r[k0], r[k1]
+            t = 0.0 if abs(r1 - r0) < 1e-12 else (E - r0) / (r1 - r0)
+            t = min(max(t, 0.0), 1.0)
+            return P[k0][0] + t * (P[k1][0] - P[k0][0])
+        aL = cross(L, L + 1)
+        aR = cross(R, R - 1)
+        ks = sorted({P[k][2] for k in range(L, R + 1)})
+        ks = [k for k in ks if any(r[q] < E - tol for q in range(n) if P[q][2] == k) or
+              elems[k][0]["kind"] == "PLANE"]
+        depth = E - r[i:j + 1].min()
+        radii, angles = [], []
+        for k in ks:
+            s_ = elems[k][0]
+            if s_["kind"] == "ARC":
+                radii.append(s_["r"])
+            elif s_["kind"] == "CONE":
+                angles.append(s_["angle"])
+        step = abs(lm[L] - rm[R]) > 0.1
+        kind = "Freistich" if step else "Einstich"
+        note = ""
+        if step and radii and any(abs(a - 15) < 1.0 for a in angles):
+            note = "ähnlich DIN 509 Form " + ("F" if any(abs(a - 8) < 1.0 for a in angles) else "E")
+        bottom = sg * r[i:j + 1].min()
+        out.append(dict(kind=kind + (" innen" if inner else ""), z0=Z(aL), z1=Z(aR), width=abs(aR - aL),
+                        depth=depth, dia=2 * sg * E, bottom=2 * bottom, radii=sorted(set(round(x, 4) for x in radii)),
+                        note=note, faces=[elems[k][0]["face"] for k in ks]))
+        i = j + 1
+    return out
+
+
+# Wendeschneidplatten für Längs-/Kopierdrehen: (Name, Spitzenwinkel, Einstellwinkel κr)
+STD_INSERTS = [("CNMG 80° κ95°", 80, 95), ("TNMG 60° κ93°", 60, 93), ("DNMG 55° κ93°", 55, 93),
+               ("VBMT 35° κ93°", 35, 93), ("VBMT 35° κ72,5°", 35, 72.5)]
+
+
+def insert_clearance(eps, kr):
+    """Nebeneinstellwinkel κ' = 180° − κr − ε: so steil darf die Kontur in Vorschubrichtung abfallen."""
+    return 180.0 - kr - eps
+
+
+def tool_check(model, wcs, elems, inner=False, margin=2.0):
+    """Für jedes Konturelement: wie steil fällt es in Vorschubrichtung −Z bzw. +Z ab, und welche Platte
+    kommt hin (κ' ≥ Abfallwinkel + Sicherheit). Hohlkehlen begrenzen den Schneidenradius."""
+    mo, md = main_axis(model)
+    Z = lambda a: float(wcs.to_wcs(mo + a * md)[2])
+    rows = []
+    sg = -1.0 if inner else 1.0
+    for k, (s, f) in enumerate(elems):
+        pts = _profile_samples([(s, f)], n_arc=24)
+        zs = np.array([Z(p[0]) for p in pts])
+        rs = np.array([sg * p[1] for p in pts])
+        dive = {}
+        for dirn, sgn in (("-Z", -1.0), ("+Z", 1.0)):
+            worst = 0.0
+            for q in range(len(pts) - 1):
+                dz, dr = zs[q + 1] - zs[q], rs[q + 1] - rs[q]
+                # in Vorschubrichtung laufen: Strecke ggf. umdrehen
+                if dz * sgn < 0 or (abs(dz) < 1e-9 and False):
+                    dz, dr = -dz, -dr
+                if abs(dz) < 1e-9:
+                    if abs(dr) > 1e-9:
+                        worst = max(worst, 90.0)   # senkrechte Planfläche: nur fallend kritisch
+                        if dr > 0:
+                            worst = max(worst, 0.0)
+                    continue
+                if dr < -1e-9:
+                    worst = max(worst, math.degrees(math.atan2(-dr, abs(dz))))
+            dive[dirn] = worst
+        # senkrechte Planflächen: steigend in der einen, fallend in der anderen Richtung
+        if s["kind"] == "PLANE":
+            q0, q1 = _oriented(s, f)
+            # welche Seite liegt höher? Nachbarn entscheiden – einfache Regel: Planfläche ist für das Längsdrehen
+            # nur in der Richtung erreichbar, in der sie zur Schneide hin steigt
+            prev_r = sg * _oriented(*elems[k - 1])[0][1] if k > 0 else None
+            next_r = sg * _oriented(*elems[k + 1])[1][1] if k + 1 < len(elems) else None
+            za, zb = Z(q0[0]), Z(q1[0])
+            zprev = Z(_oriented(*elems[k - 1])[0][0]) if k > 0 else za
+            # Kontur läuft (in Elementreihenfolge) über diese Planfläche nach oben oder unten
+            up = sg * q1[1] > sg * q0[1]
+            moving_dir = 1.0 if (k + 1 < len(elems) and Z(_oriented(*elems[k + 1])[1][0]) > za) or \
+                (k > 0 and zprev < za) else -1.0
+            # in Laufrichtung der Elemente steigt/fällt sie; Gegenrichtung umgekehrt
+            dive = {"+Z": 0.0, "-Z": 0.0}
+            run = "+Z" if moving_dir > 0 else "-Z"
+            other = "-Z" if run == "+Z" else "+Z"
+            dive[run] = 0.0 if up else 90.0
+            dive[other] = 90.0 if up else 0.0
+        def ok_tools(a):
+            return [nm for nm, e, kr in STD_INSERTS if insert_clearance(e, kr) >= a + margin]
+        row = dict(nr=k + 1, elem={"PLANE": "Plan", "CYL": "Gerade Z", "CONE": "Kegel/Fase", "ARC": "Radius"}[s["kind"]],
+                   z0=Z(_oriented(s, f)[0][0]), z1=Z(_oriented(s, f)[1][0]), face=s["face"],
+                   dive_m=dive["-Z"], dive_p=dive["+Z"], tools_m=ok_tools(dive["-Z"]), tools_p=ok_tools(dive["+Z"]),
+                   rmax=None)
+        if s["kind"] == "ARC" and model.faces[s["face"]].concavity == "1":
+            row["rmax"] = s["r"]
+        rows.append(row)
+    return rows
+
+
+def milling_features(model, wcs):
+    """Fräsmerkmale am Drehteil: Nuten (Boden + zwei Seitenwände), Schlüsselflächen (zwei parallele
+    Flächen, SW) und einzelne Abflachungen. Lage in Z und C, Tiefe ab Außendurchmesser."""
+    mo, md = main_axis(model)
+    e1, e2 = angle_frame(md, wcs)
+    Z = lambda a: float(wcs.to_wcs(mo + a * md)[2])
+    vf = _vertex_faces(model)
+    def neighbours(i):
+        out = set()
+        for k in map(tuple, np.round(model.faces[i].triangles.reshape(-1, 3), 4)):
+            out |= vf.get(k, set())
+        out.discard(i)
+        return out
+    planes = {}
+    for i, f in enumerate(model.faces):
+        if isinstance(f.surf, PlaneSurf) and abs(f.surf.n @ md) < 1e-3:
+            n = outward_normal(model, i, f.surf.n)
+            V = f.triangles.reshape(-1, 3)
+            c = V.mean(0)
+            planes[i] = dict(n=n, c=c, h=float((c - mo) @ n), V=V)
+    try:
+        cyl_r = [float(sg["p0"][1]) for sg in lathe_segments(model)[0]
+                 if sg["kind"] == "CYL" and model.faces[sg["face"]].concavity != "1"]
+    except Exception:
+        cyl_r = []
+
+    def snapR(R):
+        near = [r for r in cyl_r if abs(r - R) < max(0.05, 2e-3 * R)]
+        return min(near, key=lambda r: abs(r - R)) if near else R
+    used, feats = set(), []
+    for i, pl in planes.items():
+        if pl["h"] <= 1e-3:
+            continue
+        n = pl["n"]
+        walls = [j for j in neighbours(i) if j in planes and abs(planes[j]["n"] @ n) < 1e-3]
+        pair = None
+        for a in walls:
+            for b in walls:
+                if a < b and planes[a]["n"] @ planes[b]["n"] < -0.999:
+                    pair = (a, b)
+        ends = [j for j in neighbours(i) if model.faces[j].ftype == "CYLINDER" and model.faces[j].concavity == "1"
+                and isinstance(model.faces[j].surf, RevSurf) and abs(abs(model.faces[j].surf.d @ n) - 1) < 1e-3]
+        c_ang = math.degrees(math.atan2(n @ e2, n @ e1)) % 360.0
+        if pair:
+            a, b = pair
+            width = abs(float((planes[a]["c"] - planes[b]["c"]) @ planes[a]["n"]))
+            fs = [i, a, b] + ends
+            V = np.concatenate([model.faces[j].triangles.reshape(-1, 3) for j in fs])
+            Wv = np.concatenate([planes[a]["V"], planes[b]["V"]])
+            q = Wv - mo
+            R = snapR(float(np.linalg.norm(q - np.outer(q @ md, md), axis=1).max()))
+            ax = (V - mo) @ md
+            feats.append(dict(kind="Nut", width=width, depth=R - pl["h"], dia=2 * R,
+                              z0=Z(ax.min()), z1=Z(ax.max()), length=float(ax.max() - ax.min()),
+                              c=c_ang, h=pl["h"], ends="rund" if ends else "eckig", faces=fs))
+            used |= set(fs)
+            continue
+        if walls:
+            continue
+        q = pl["V"] - mo
+        R = snapR(float(np.linalg.norm(q - np.outer(q @ md, md), axis=1).max()))
+        ax = (pl["V"] - mo) @ md
+        feats.append(dict(kind="Abflachung", width=None, depth=R - pl["h"], dia=2 * R, z0=Z(ax.min()), z1=Z(ax.max()),
+                          length=float(ax.max() - ax.min()), c=c_ang, h=pl["h"], ends="", faces=[i]))
+    # Schlüsselflächen: zwei gegenüberliegende Abflachungen gleicher Lage
+    flats = [f for f in feats if f["kind"] == "Abflachung"]
+    done = set()
+    for x in flats:
+        for y in flats:
+            if id(x) >= id(y) or id(x) in done or id(y) in done:
+                continue
+            nx = planes[x["faces"][0]]["n"]; ny = planes[y["faces"][0]]["n"]
+            if nx @ ny < -0.999 and abs(x["h"] - y["h"]) < 0.01 and min(x["z1"], y["z1"]) > max(x["z0"], y["z0"]) - 1e-3:
+                x["kind"] = "Schlüsselfläche"
+                x["width"] = x["h"] + y["h"]
+                x["faces"] = x["faces"] + y["faces"]
+                x["c2"] = y["c"]
+                done |= {id(x), id(y)}
+                feats.remove(y)
+    for f in feats:
+        if f["z0"] > f["z1"]:
+            f["z0"], f["z1"] = f["z1"], f["z0"]
+    feats.sort(key=lambda f: (f["z0"], f["c"]))
+    return feats
 
 
 def contour_gcode(rows, dialect="iso", x_radius=False, swap_arcs=False, name="Kontur"):

@@ -60,6 +60,11 @@ zeigt der Tooltip, wenn man die Maus kurz darauf hält.
 - **Radius-Mittelpunkt** für die Drehmaschine (Z und X als Durchmesser)
 - **Radius oder Fase „wegdenken“:** scharfe Ecke mit exaktem Z-Wert anzeigen
 - **Bohrbild:** Lochkreis, Teilung und Winkel jeder Bohrung, C0° frei wählbar
+- **Bohrungs-Eintritt** für Dreh-Fräszentren: roter Punkt mit X (Ø), Y, Z, C und B – auch für Schräg-
+  und außermittige Bohrungen; Senkung, Bohrspitze und Tiefe bis voller Ø
+- **Einstiche/Freistiche**, **Nuten und Schlüsselflächen** (Breite/SW, Tiefe, Z, C) als Tabellen
+- **Werkzeugprüfung:** welche Platte (35°/55°/60°/80°) kommt an jede Stelle der Kontur, größter Schneidenradius
+- **Kegel nach Norm:** 1:x, Kegelwinkel, Morsekegel, 7:24 …
 - **Gewindebohrungen:** Gewindebereich farbig im Bauteil, Gewindetiefe, Kernloch-Ø, Kernlochtiefe, Bohrspitze
 - **Eigener Nullpunkt** (z. B. Teilmitte, Planfläche) und Bohrungstabelle als CSV
 - Schnittansicht, Glas-Ansicht, Linien-Ansicht, Box mit Außenmaßen
@@ -88,8 +93,8 @@ der Urheberhinweis muss erhalten bleiben. Ohne Gewähr – Maße für die Fertig
 immer mit der gültigen Zeichnung abgleichen.
 
 Die Demo-Datei `demo/Demo_Welle.s3d` ist frei erfunden und darf beliebig verwendet werden
-(Drehkontur mit Fasen/Radien/Kegel, 6× M6, Querbohrung, Passfedernut, Schlüsselfläche,
-Schrägbohrungen 45°). Erzeugt wird sie mit `demo/generator/make_demo.py`.
+(Drehkontur mit Fasen/Radien/Kegel, Einstich, 6× M6 mit Senkung, Querbohrung, außermittige Bohrung,
+Passfedernut, Schlüsselfläche, Schrägbohrungen 45°). Erzeugt wird sie mit `demo/generator/make_demo.py`.
 `demo/Demo_Indexbolzen.s3d` (Spitze R5 / 30° / 15°, 4× Ø3 unter 45° in Bohrung Ø5) zeigt die
 roten Bohrungs-Eintrittspunkte; Erzeuger: `demo/generator/make_indexbolzen.py`.
 Das Logo liegt im Ordner `logo/` (SVG, PNG, ICO).

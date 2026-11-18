@@ -1613,6 +1613,15 @@ class MainWindow(QtWidgets.QMainWindow):
         help_.setWordWrap(True)
         help_.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(help_)
+        rb = QtWidgets.QPushButton("↺  Alle Nullpunkt-Werte zurücksetzen  (Drehmaschine: Z = Länge, X = Ø, C0° wie beim Öffnen)")
+        rb.setToolTip("Hebt alle Verschiebungen, Drehungen und „Nullpunkt aus Auswahl“ auf – "
+                      "der Nullpunkt ist danach wieder so wie direkt nach dem Öffnen der Datei.")
+        f_ = rb.font()
+        f_.setBold(True)
+        rb.setFont(f_)
+        rb.setMinimumHeight(34)
+        rb.clicked.connect(self.wcs_reset_all)
+        lay.addWidget(rb)
         grid = QtWidgets.QGridLayout()
         buttons = [
             ("Nullpunkt aus Auswahl", self.wcs_from_selection),
@@ -4894,6 +4903,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def wcs_reset(self):
         self.wcs.reset()
         self._wcs_changed()
+
+    def wcs_reset_all(self):
+        """Nullpunkt wieder wie nach dem Öffnen: Drehmaschinen-Lage, ohne Verschiebung und Drehung."""
+        if self.model is None:
+            return
+        self.wcs.set_lathe(self.model)
+        self._wcs_changed()
+        self.status.showMessage("Nullpunkt zurückgesetzt: Drehmaschine – Z = Längsachse, X = Ø (radial), Y quer, "
+                                "C0° wie beim Öffnen")
 
     def wcs_lathe(self):
         if self.model is None:

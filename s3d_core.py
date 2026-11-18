@@ -2663,6 +2663,195 @@ def milling_features(model, wcs):
     return feats
 
 
+def pocket_contour(model, wcs, feat):
+    """Fräskontur einer Nut (oder Tasche) in der Ebene des Nutgrunds – so, wie sie für das Fräsen
+    beschrieben wird: Übergangspunkte Linie/Bogen (Z, Y), Bögen mit R, Mittelpunkt und Drehsinn.
+    Koordinaten: Z entlang der Längsachse (Nullpunkt), Y quer dazu in der Lage C der Nut,
+    X = Ø-Wert (Boden bzw. Oberkante am Mantel). Umlauf gegen den Uhrzeigersinn mit Blick von +X
+    (Werkzeug innen links der Kontur = G41). Ergebnis: dict mit points, elems, info – oder None."""
+    if feat.get("kind") != "Nut":
+        return None
+    mo, md = main_axis(model)
+    floor = feat["faces"][0]
+    side = [j for j in feat["faces"][1:]]
+    f0 = model.faces[floor]
+    n = outward_normal(model, floor, f0.surf.n)
+    eo = unit(n - (n @ md) * md)
+    ey = np.cross(md, eo)
+    h = float(feat["h"])
+    z_of = lambda p: float(wcs.to_wcs(mo + float((p - mo) @ md) * md)[2])
+    zsign = float(np.sign(wcs.dir_to_wcs(md)[2]) or 1.0)
+
+    def to2(p):
+        q = np.asarray(p, float) - mo
+        return np.array([float(q @ md), float(q @ ey)])      # (a entlang Achse, y)
+
+    # Randschleife des Nutgrunds und Zuordnung jedes Randpunkts zur angrenzenden Seitenfläche
+    tris = f0.triangles.reshape(-1, 3, 3)
+    key = np.round(tris.reshape(-1, 3), 4)
+    uk, inv = np.unique(key, axis=0, return_inverse=True)
+    inv = inv.reshape(-1, 3)
+    E = np.sort(np.concatenate([inv[:, [0, 1]], inv[:, [1, 2]], inv[:, [2, 0]]]), axis=1)
+    uE, cnt = np.unique(E, axis=0, return_counts=True)
+    bnd = uE[cnt == 1]
+    if len(bnd) < 3:
+        return None
+    adj = {}
+    for x, y in bnd:
+        adj.setdefault(int(x), []).append(int(y))
+        adj.setdefault(int(y), []).append(int(x))
+    start = int(bnd[0][0])
+    loop, prev, cur = [start], None, start
+    for _ in range(len(adj) + 2):
+        nxt = [v for v in adj[cur] if v != prev]
+        if not nxt:
+            break
+        prev, cur = cur, nxt[0]
+        if cur == start:
+            break
+        loop.append(cur)
+    vf = _vertex_faces(model)
+    sset = set(side)
+    fsets = [set(vf.get(tuple(uk[v]), ())) & sset for v in loop]
+    lab = []
+    for i in range(len(loop)):                 # jede Randstrecke gehört zu der Seitenfläche beider Endpunkte
+        fs = fsets[i] & fsets[(i + 1) % len(loop)]
+        lab.append(next(iter(fs)) if len(fs) == 1 else None)
+    # Elementfolge (zyklisch, ohne Wiederholungen)
+    seq = []
+    for j in lab:
+        if j is not None and (not seq or seq[-1] != j):
+            seq.append(j)
+    while len(seq) > 1 and seq[0] == seq[-1]:
+        seq.pop()
+    if len(seq) < 2:
+        return None
+    pts2 = np.array([to2(uk[v]) for v in loop])
+    # Umlaufsinn: gegen den Uhrzeigersinn in (Y, Z) mit Blick von +X
+    yz = np.column_stack([pts2[:, 1], zsign * pts2[:, 0]])
+    area = 0.5 * np.sum(yz[:, 0] * np.roll(yz[:, 1], -1) - np.roll(yz[:, 0], -1) * yz[:, 1])
+    if area < 0:
+        seq = seq[::-1]
+    elems = []
+    for j in seq:
+        f = model.faces[j]
+        V2 = np.array([to2(p) for p in f.triangles.reshape(-1, 3)])
+        if isinstance(f.surf, PlaneSurf):
+            nn = f.surf.n
+            t3 = np.cross(n, nn)
+            t2 = np.array([float(t3 @ md), float(t3 @ ey)])
+            t2 /= np.linalg.norm(t2)
+            elems.append(dict(kind="LINE", face=j, p=V2.mean(0), t=t2, V=V2))
+        elif isinstance(f.surf, RevSurf):
+            c2 = to2(f.surf.o)
+            r = float(np.linalg.norm(V2 - c2, axis=1).mean()) if f.surf.radius is None else float(f.surf.radius)
+            elems.append(dict(kind="ARC", face=j, c=c2, r=r, V=V2))
+        else:
+            return None
+
+    def meet(a, b, hint):
+        if a["kind"] == "LINE" and b["kind"] == "LINE":
+            A = np.column_stack([a["t"], -b["t"]])
+            if abs(np.linalg.det(A)) < 1e-9:
+                return hint
+            s_ = np.linalg.solve(A, b["p"] - a["p"])
+            return a["p"] + s_[0] * a["t"]
+        if a["kind"] == "ARC" and b["kind"] == "LINE":
+            a, b = b, a
+        if a["kind"] == "LINE" and b["kind"] == "ARC":
+            foot = a["p"] + ((b["c"] - a["p"]) @ a["t"]) * a["t"]
+            dist = np.linalg.norm(b["c"] - foot)
+            if abs(dist - b["r"]) < 1e-3 * max(1, b["r"]):
+                return foot                                   # tangentialer Übergang
+            if dist > b["r"]:
+                return hint
+            k = math.sqrt(b["r"] ** 2 - dist ** 2)
+            cands = [foot + k * a["t"], foot - k * a["t"]]
+            return min(cands, key=lambda q: np.linalg.norm(q - hint))
+        dcc = b["c"] - a["c"]
+        L = np.linalg.norm(dcc)
+        if L < 1e-9:
+            return hint
+        u = dcc / L
+        if abs(L - (a["r"] + b["r"])) < 1e-3 or abs(L - abs(a["r"] - b["r"])) < 1e-3:
+            return a["c"] + a["r"] * u * (1 if L > abs(a["r"] - b["r"]) + 1e-3 or a["r"] >= b["r"] else -1)
+        x = (L * L + a["r"] ** 2 - b["r"] ** 2) / (2 * L)
+        yv = math.sqrt(max(a["r"] ** 2 - x * x, 0.0))
+        pm = a["c"] + x * u
+        w = np.array([-u[1], u[0]])
+        return min([pm + yv * w, pm - yv * w], key=lambda q: np.linalg.norm(q - hint))
+
+    m = len(elems)
+    trans = []
+    for i in range(m):
+        a, b = elems[i], elems[(i + 1) % m]
+        Va, Vb = a["V"], b["V"]
+        dd = np.linalg.norm(Va[:, None, :] - Vb[None, :, :], axis=2)
+        k = np.unravel_index(np.argmin(dd), dd.shape)
+        hint = 0.5 * (Va[k[0]] + Vb[k[1]])
+        trans.append(meet(a, b, hint))
+    R_out = feat["dia"] / 2.0
+
+    def pt(q):
+        y = float(q[1])
+        xo = 2 * math.sqrt(max(R_out ** 2 - y * y, 0.0))
+        return dict(z=z_of(mo + q[0] * md), y=y, x_floor=2 * h, x_top=xo,
+                    p3=mo + q[0] * md + y * ey + (xo / 2) * eo,            # auf der Oberkante (Mantel)
+                    p3_floor=mo + q[0] * md + y * ey + h * eo)
+    # Punkte: P1 = Anfang von Element 1 (= Übergang vom letzten Element), dann Ende jedes Elements
+    points = [pt(trans[-1])] + [pt(trans[i]) for i in range(m)]
+    rows = []
+    for i, e in enumerate(elems):
+        p0, p1 = points[i], points[i + 1]
+        r = dict(nr=i + 1, kind="Linie" if e["kind"] == "LINE" else "Bogen", z0=p0["z"], y0=p0["y"], z1=p1["z"],
+                 y1=p1["y"], face=e["face"], r=None, cz=None, cy=None, g=None)
+        if e["kind"] == "ARC":
+            c = e["c"]
+            mid = e["V"][np.argmax(np.linalg.norm(e["V"] - 0.5 * (trans[i - 1] + trans[i]), axis=1))]
+            v0 = np.array([trans[i - 1][1] - c[1], zsign * (trans[i - 1][0] - c[0])])
+            vm = np.array([mid[1] - c[1], zsign * (mid[0] - c[0])])
+            cr = v0[0] * vm[1] - v0[1] * vm[0]
+            r.update(r=e["r"], cz=z_of(mo + c[0] * md), cy=float(c[1]), g="G3" if cr > 0 else "G2")
+        rows.append(r)
+    return dict(points=points, rows=rows, h=h, c=feat["c"], width=feat.get("width"), depth=feat["depth"],
+                dia=feat["dia"], eo=eo, ey=ey)
+
+
+def pocket_contour_reversed(pc):
+    """Gleiche Kontur im Uhrzeigersinn (Werkzeug rechts = G42)."""
+    pts = pc["points"][::-1]
+    rows = []
+    for i, r in enumerate(pc["rows"][::-1]):
+        q = dict(r)
+        q.update(nr=i + 1, z0=r["z1"], y0=r["y1"], z1=r["z0"], y1=r["y0"])
+        if r["g"]:
+            q["g"] = "G2" if r["g"] == "G3" else "G3"
+        rows.append(q)
+    out = dict(pc)
+    out.update(points=pts, rows=rows)
+    return out
+
+
+def pocket_points_3d(model, wcs):
+    """Alle Übergangspunkte aller Nuten: [(Punkt 3D, Nut-Index, Punkt-Index)] – für die roten Punkte."""
+    out = []
+    try:
+        feats = milling_features(model, wcs)
+    except Exception:
+        return out
+    for k, f in enumerate(feats):
+        if f["kind"] != "Nut":
+            continue
+        try:
+            pc = pocket_contour(model, wcs, f)
+        except Exception:
+            pc = None
+        if pc:
+            for i, p in enumerate(pc["points"][:-1]):
+                out.append((p["p3"], k, i))
+    return out
+
+
 def contour_gcode(rows, dialect="iso", x_radius=False, swap_arcs=False, name="Kontur"):
     """Kontur als neutrales G-Code-Konturprogramm (nur Geometrie, ohne Technologie).
     dialect: 'iso' = Fanuc / Mazak EIA / DIN PLUS (Bogen mit R), 'siemens' = Sinumerik 840D (Bogen mit CR=)."""

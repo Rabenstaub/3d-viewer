@@ -231,6 +231,18 @@ Bohrungstabelle: Bezeichnung (z. B. M6×1), <b>Gewindetiefe</b>, Kernloch-Ø, <b
 <tr><td><b>Abflachung</b> (einzelne Fläche)</td><td>Tiefe ab Ø, Abstand Boden ↔ Mitte, Z, Länge, C</td></tr>
 </table>
 <p>C° ist die Richtung, aus der das Werkzeug auf den Boden schaut. Zeile anklicken = Flächen im Bild markiert.</p>
+<h3>Fräskontur einer Nut (Z/Y-Koordinaten)</h3>
+<p>Zum Programmieren der Nut als Kontur (z. B. in der ZY-Ebene mit Fräserradiuskorrektur) braucht man alle Übergangspunkte
+zwischen geraden Linien und Rundungen. Dafür gibt es drei Wege:</p>
+<table>
+<tr><td><b>Roten Punkt anklicken</b></td><td>An jedem Übergang Linie ↔ Bogen sitzt auf der Nutkante ein roter Punkt (Annotationen an). Klick zeigt Z, Y, X Ø am Boden und an der Oberkante sowie C.</td></tr>
+<tr><td><b>Kanten oder Flächen der Nut wählen</b></td><td>z. B. die Nutkanten mit <kbd>Strg</kbd> anklicken – rechts unter <b>Auswahl / Messen</b> erscheint die komplette <b>Nut-Kontur</b> als Liste, im Bild die Bahn mit P1, P2 …</td></tr>
+<tr><td><b>Drehteil → Fräsen</b></td><td>Nut in der oberen Tabelle anklicken – unten steht die Kontur mit allen Punkten, Radien, Mittelpunkten und G2/G3, als CSV speicherbar.</td></tr>
+</table>
+<p>Die Koordinaten gelten in der Lage <b>C</b> der Nut: <b>Z</b> entlang der Längsachse, <b>Y</b> quer dazu, <b>X Ø</b> am Nutgrund
+(Bearbeitungstiefe) und an der Oberkante am Mantel. Der Umlauf ist gegen den Uhrzeigersinn mit Blick von +X – das Werkzeug liegt
+innen <b>links</b> der Kontur (G41). Mit „Umlauf im Uhrzeigersinn (G42)“ wird die Richtung umgedreht. Die Bögen haben R,
+Mittelpunkt (Z/Y) und G2/G3 – den Drehsinn bitte einmal mit der Ebenen-Festlegung deiner Steuerung (z. B. G19) abgleichen.</p>
 <p class="bild"><img src="bilder/fraesen.png" width="820"></p>
 
 <a name="werkzeug"></a>

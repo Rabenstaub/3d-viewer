@@ -5,6 +5,13 @@ Dateien:   S3D_Viewer.pyw (Programm) + s3d_core.py (Geometrie-Kern) – beide im
 Starten:   S3D_Viewer.pyw doppelklicken (fehlende Pakete werden angeboten)
 EXE bauen: build.bat
 
+Neu in 3.3.1
+------------
+  Fräskontur von Nuten: rote Punkte an jedem Übergang Linie ↔ Bogen auf der Nutkante (anklickbar:
+  Z, Y, X Ø Boden/Oberkante, C). Werden Kanten oder Flächen einer Nut gewählt (auch mit Strg),
+  steht rechts die komplette Kontur: Punkte P1 …, Linie/Bogen, R, Mittelpunkt Z/Y, G2/G3.
+  Drehteil → Fräsen zeigt dieselbe Liste unter der Nut-Tabelle (CSV-Export, Umlauf G41/G42).
+
 Neu in 3.3
 ----------
   Fertigungsangaben für die Arbeitsvorbereitung an Dreh-Fräszentren:

@@ -87,7 +87,7 @@ from s3d_core import fmt
 
 APP_NAME = "3D Viewer"
 APP_URL = "https://github.com/Rabenstaub"
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.3.1"
 
 # Beidseitige Beleuchtung: Kopflicht + Führungslicht + leichter Glanz
 _sh.Shaders.append(_sh.ShaderProgram("s3d_shaded", [
@@ -1298,7 +1298,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view_frame_name = self.settings.value("view_frame", "CLASSMATE")
         self.user_views = []
         self.rect_filter = dict(self.RECT_FILTER_DEFAULTS)
-        self.annot_types = {"Gewinde": True, "Eintritt": True, "only_selected": False}
+        self.annot_types = {"Gewinde": True, "Eintritt": True, "Kontur": True, "only_selected": False}
         self.view = Viewport()
         try:
             _ic = QtWidgets.QApplication.instance().windowIcon()
@@ -1839,6 +1839,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.entry_pts.append((np.asarray(h.entry, float), i))
         if self.entry_pts:
             self.vertices = np.vstack([self.vertices.reshape(-1, 3)] + [p[None, :] for p, _ in self.entry_pts])
+        # Übergangspunkte der Nut-Konturen (Linie ↔ Bogen) – anklickbar
+        self.pocket_pts = []
+        if self.model is not None:
+            try:
+                self.pocket_pts = core.pocket_points_3d(self.model, self.wcs)
+            except Exception:
+                self.pocket_pts = []
+        if self.pocket_pts:
+            self.vertices = np.vstack([self.vertices.reshape(-1, 3)] + [p[None, :] for p, *_ in self.pocket_pts])
 
     def _freeform_edges_from_mesh(self, V, T, F):
         """Freiform-Kanten (z. B. Verschneidung Querbohrung/Mantel) haben in der Datei keine Punkte.
@@ -2255,7 +2264,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if a.isChecked() != on:
                 a.trigger() if self.model is not None else a.setChecked(on)
         self.settings.setValue("thread_color_on", True)
-        self.annot_types = {"Gewinde": True, "Eintritt": True, "only_selected": False}
+        self.annot_types = {"Gewinde": True, "Eintritt": True, "Kontur": True, "only_selected": False}
         self.nav_mode = False
         self.show_hidden = False
         self.settings.setValue("show_hidden", 0)
@@ -3013,7 +3022,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for key, text in (("only_selected", "Nur Annotationen der gewählten Flächen anzeigen"),
                           ("Gewinde", "Gewinde anzeigen"),
                           ("Gewindetiefe", "Gewinde- und Kernlochtiefe anzeigen"),
-                          ("Eintritt", "Eintrittspunkte schräger/radialer Bohrungen (rot)")):
+                          ("Eintritt", "Eintrittspunkte schräger/radialer Bohrungen (rot)"),
+                          ("Kontur", "Konturpunkte von Nuten – Übergang Linie/Bogen (rot)")):
             aa = anm.addAction(text)
             aa.setCheckable(True)
             aa.setChecked(self.annot_types.get(key, False))
@@ -3078,6 +3088,8 @@ class MainWindow(QtWidgets.QMainWindow):
                    if self.annot_types.get("Eintritt", True) and (
                        not self.annot_types.get("only_selected", False)
                        or bool({e.ref for e in self.sel if e.kind == "face"} & set(self.holes[i].faces)))]
+            if self.annot_types.get("Kontur", True):
+                pts += [p for p, *_ in getattr(self, "pocket_pts", [])]
             if pts:
                 it = gl.GLScatterPlotItem(pos=np.array(pts), size=10, color=(0.86, 0.05, 0.05, 1.0), pxMode=True)
                 it.setGLOptions(GL_ONTOP if self.a_glass.isChecked() else GL_EDGES)
@@ -4384,11 +4396,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if e.kind == "point":
                 pw = self.wcs.to_wcs(e.point)
                 ei = self._entry_at(e.point)
-                if ei is not None:
+                pk = self._pocket_at(e.point)
+                if pk is not None and ei is None:
+                    self._show_pocket(pk[0], highlight=pk[1])
+                elif ei is not None:
                     self._show_entry_overlay(ei)
                     self.sel_callouts = [self._callout(e.point, self._entry_text(ei)[0],
                                                        bg=self._qc("#fffff0f0"), fg=self._qc("#ffb00020"))]
-                else:
+                elif pk is None:
                     self.sel_callouts = [self._callout(e.point, f"X {fmt(pw[0])}\nY {fmt(pw[1])}\nZ {fmt(pw[2])}")]
                 self._sync_callouts()
             elif e.kind == "edge" and str(e.ref).startswith("Ecke-"):
@@ -4458,6 +4473,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_angle_overlay()
         if not getattr(self, "_keep_tab", False):
             self.tabs_right.setCurrentIndex(0)
+        if not (n == 1 and self.sel[0].kind == "point"):
+            k_p = self._pocket_for_selection()
+            if k_p is not None:
+                self._show_pocket(k_p)
 
     def _hole_angles(self):
         """Winkellage parallel liegender Bohrungen um ihre gemeinsame Mitte.
@@ -4562,6 +4581,147 @@ class MainWindow(QtWidgets.QMainWindow):
         if len(self.sel) >= 3:
             self._show_selection_text_only()
 
+    # ---------------- Nut-Kontur (Fräsen) ----------------
+    def _mill_feats(self):
+        if getattr(self, "_mill_rows", None):
+            return self._mill_rows
+        try:
+            return core.milling_features(self.model, self.wcs)
+        except Exception:
+            return []
+
+    def _pocket_at(self, p, tol=1e-4):
+        for q, k, i in getattr(self, "pocket_pts", []):
+            if np.linalg.norm(q - np.asarray(p, float)) < tol:
+                return k, i
+        return None
+
+    def _pocket_for_selection(self):
+        """Nut, zu der die gewählten Flächen/Kanten gehören (Index in den Fräsmerkmalen)."""
+        if self.model is None or not self.sel:
+            return None
+        ef = core._edge_faces(self.model)
+        faces = set()
+        for e in self.sel:
+            if e.kind == "face":
+                faces.add(e.ref)
+            elif e.kind == "edge":
+                faces |= ef.get(e.ref, set())
+        best = None
+        for k, f in enumerate(self._mill_feats()):
+            if f["kind"] != "Nut":
+                continue
+            ov = len(faces & set(f["faces"]))
+            if ov and (best is None or ov > best[0]):
+                best = (ov, k)
+        return None if best is None else best[1]
+
+    def _pocket_contour(self, k):
+        feats = self._mill_feats()
+        if k is None or k >= len(feats):
+            return None
+        pc = core.pocket_contour(self.model, self.wcs, feats[k])
+        if pc and getattr(self, "pocket_rev", None) is not None and self.pocket_rev.isChecked():
+            pc = core.pocket_contour_reversed(pc)
+        return pc
+
+    def _pocket_table_rows(self, pc):
+        pts, rows = pc["points"], pc["rows"]
+        out = [("P1", "Start", fmt(pts[0]["z"]), fmt(pts[0]["y"]), fmt(pts[0]["x_floor"]), fmt(pts[0]["x_top"]),
+                "", "", "", "")]
+        for r, p in zip(rows, pts[1:]):
+            out.append((f"P{r['nr'] + 1 if r['nr'] < len(rows) else 1}", r["kind"], fmt(r["z1"]), fmt(r["y1"]),
+                        fmt(p["x_floor"]), fmt(p["x_top"]), fmt(r["r"]) if r["r"] else "",
+                        fmt(r["cz"]) if r["cz"] is not None else "", fmt(r["cy"]) if r["cy"] is not None else "",
+                        r["g"] or ""))
+        return out
+
+    def _show_pocket(self, k, highlight=None, graphics=True):
+        """Kontur der Nut k: Liste rechts (Auswahl + Drehteil → Fräsen), Bahn und Punkte P1… im Bild."""
+        pc = self._pocket_contour(k)
+        if not pc:
+            return
+        pts, rows = pc["points"], pc["rows"]
+        trows = self._pocket_table_rows(pc)
+        rev = self.pocket_rev.isChecked() if hasattr(self, "pocket_rev") else False
+        if hasattr(self, "pocket_table"):
+            self.pocket_table.set_rows(trows)
+            self.pocket_info.setText(
+                f"Nut {fmt(pc['width'])} breit, {fmt(pc['depth'])} tief am Ø{fmt(pc['dia'])} · Lage C {fmt(pc['c'], 2)}° · "
+                f"Boden X Ø{fmt(2 * pc['h'])} · Umlauf {'im Uhrzeigersinn (G42)' if rev else 'gegen den Uhrzeigersinn (G41)'}"
+                f", Blick von +X auf die Nut")
+        h = ("<div style='color:#1d4fb8; font-size:large; font-weight:600; margin:10px 0 4px 0'>Nut-Kontur (Fräsen)</div>"
+             f"<p style='color:#6b7890; margin:0 0 6px 0'>{fmt(pc['width'])} breit · {fmt(pc['depth'])} tief am Ø{fmt(pc['dia'])}"
+             f" · C {fmt(pc['c'], 2)}° · Boden X Ø{fmt(2 * pc['h'])} · Z/Y in der Lage C, Blick von +X · "
+             f"{'Uhrzeigersinn (G42)' if rev else 'gegen Uhrzeigersinn (G41, Werkzeug links)'}</p>"
+             "<table cellspacing=0 cellpadding=3 width='100%'><tr style='background:#e8eef9'>"
+             + "".join(f"<th align=left>{t}</th>" for t in ("", "Element", "Z", "Y", "X Ø oben", "R", "Mitte Z", "Mitte Y", ""))
+             + "</tr>")
+        for i, t in enumerate(trows):
+            bg = " style='background:#f3f7fd'" if i % 2 else ""
+            hit = highlight is not None and i < len(trows) - 1 and i == highlight
+            st = " style='color:#b00020; font-weight:600'" if hit else ""
+            cells = (t[0], t[1], t[2], t[3], t[5], t[6], t[7], t[8], t[9])
+            h += f"<tr{bg}>" + "".join(f"<td{st}>{c}</td>" for c in cells) + "</tr>"
+        h += "</table>"
+        self.sel_info.append(h)
+        if not graphics:
+            return
+        P = [p["p3"] for p in pts[:-1]]
+        mo, md = core.main_axis(self.model)
+        eo, ey, hh = pc["eo"], pc["ey"], pc["h"]
+        zs = float(np.sign(self.wcs.dir_to_wcs(md)[2]) or 1.0)
+        a_axis = float(self.wcs.to_wcs(mo)[2])
+
+        R_top = pc["dia"] / 2.0
+
+        def to3(q2):           # Bahn auf der Oberkante am Mantel (dort, wo man die Nutkante sieht)
+            return mo + q2[0] * md + q2[1] * ey + math.sqrt(max(R_top ** 2 - q2[1] ** 2, 0.0)) * eo
+
+        def to2(p3):
+            q = np.asarray(p3, float) - mo
+            return np.array([float(q @ md), float(q @ ey)])
+        path = []
+        for i, r in enumerate(rows):
+            a, b = to2(pts[i]["p3"]), to2(pts[i + 1]["p3"])
+            if r["kind"] == "Bogen":
+                c = np.array([(r["cz"] - a_axis) * zs, r["cy"]])
+                v0, v1 = a - c, b - c
+                a0_, a1_ = math.atan2(v0[1], v0[0]), math.atan2(v1[1], v1[0])
+                # G3 = gegen den Uhrzeigersinn in der (Y, Z)-Sicht; in (a, y) ist das der Uhrzeigersinn, wenn zs > 0
+                cw_ay = (r["g"] == "G3") == (zs > 0)
+                da = -((a0_ - a1_) % (2 * math.pi)) if cw_ay else (a1_ - a0_) % (2 * math.pi)
+                for t in np.linspace(0, 1, 25):
+                    an = a0_ + t * da
+                    path.append(to3(c + r["r"] * np.array([math.cos(an), math.sin(an)])))
+            else:
+                path += [to3(a), to3(b)]
+        items = []
+        if len(path) > 1:
+            ln = gl.GLLinePlotItem(pos=np.array(path), color=(0.95, 0.5, 0.0, 1.0), width=2.5, antialias=True,
+                                   glOptions=GL_ONTOP)
+            ln.setDepthValue(20)
+            items.append(ln)
+        dots = gl.GLScatterPlotItem(pos=np.array(P), size=11, color=(0.86, 0.05, 0.05, 1.0), pxMode=True,
+                                    glOptions=GL_ONTOP)
+        dots.setDepthValue(22)
+        items.append(dots)
+        cs = []
+        for i, q in enumerate(P):
+            txt = f"P{i + 1}"
+            if highlight is not None and i == highlight:
+                p = pts[i]
+                txt = (f"P{i + 1}  Nut-Kontur\nZ {fmt(p['z'])}\nY {fmt(p['y'])}\nX Ø {fmt(p['x_floor'])} (Boden)\n"
+                       f"X Ø {fmt(p['x_top'])} (oben)\nC {fmt(pc['c'], 2)}°")
+                self.status.showMessage(f"Nut-Kontur P{i + 1}: Z {fmt(p['z'])}  Y {fmt(p['y'])}  X Ø {fmt(p['x_floor'])} "
+                                        f"(Boden) / {fmt(p['x_top'])} (Oberkante)  C {fmt(pc['c'], 2)}°")
+            cs.append(self._callout(q, txt, bg=self._qc("#fffff0f0"), fg=self._qc("#ffb00020")))
+        self.sel_callouts = list(getattr(self, "sel_callouts", []) or []) + cs
+        self._sync_callouts()
+        for it in items:
+            self.view.addItem(it)
+        self.items_overlay = list(self.items_overlay) + items
+
     def _show_selection_text_only(self):
         rows = [(f"{i + 1}.", e.label()) for i, e in enumerate(self.sel)]
         html = html_table(rows, f"{len(self.sel)} Elemente gewählt")
@@ -4577,6 +4737,9 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
         self.sel_info.setHtml(html)
+        k = self._pocket_for_selection()
+        if k is not None:
+            self._show_pocket(k, graphics=False)
 
     def _entity_center(self, e):
         if e.kind == "point":
@@ -5118,6 +5281,24 @@ class MainWindow(QtWidgets.QMainWindow):
                                "(Werkzeug von dort). Zeile anklicken = Flächen zeigen.")
         lab.setWordWrap(True)
         l5.addWidget(lab)
+        hl = QtWidgets.QHBoxLayout()
+        t = QtWidgets.QLabel("<b>Fräskontur der gewählten Nut</b> (Z/Y in der Lage C)")
+        hl.addWidget(t, 1)
+        self.pocket_rev = QtWidgets.QCheckBox("Umlauf im Uhrzeigersinn (G42)")
+        self.pocket_rev.setToolTip("Standard: gegen den Uhrzeigersinn mit Blick von +X – Werkzeug innen links (G41)")
+        self.pocket_rev.toggled.connect(lambda *_: self._refresh_selection() if self.sel else None)
+        hl.addWidget(self.pocket_rev)
+        l5.addLayout(hl)
+        self.pocket_table = InfoTable(["Punkt", "Element bis hier", "Z", "Y", "X Ø Boden", "X Ø Oberkante", "R",
+                                       "Mitte Z", "Mitte Y", "G2/G3"])
+        l5.addWidget(self.pocket_table, 1)
+        self.pocket_info = QtWidgets.QLabel("Nut in der Tabelle oben oder im Bild anklicken (auch Kanten mit Strg) – "
+                                            "dann stehen hier alle Konturpunkte.")
+        self.pocket_info.setWordWrap(True)
+        l5.addWidget(self.pocket_info)
+        b = QtWidgets.QPushButton("Kontur als CSV speichern …")
+        b.clicked.connect(lambda: self._export_table(self.pocket_table, "_Nutkontur.csv", "Nut-Kontur speichern"))
+        l5.addWidget(b)
         tabs.addTab(w5, "Fräsen")
         self._groove_rows, self._tool_rows, self._mill_rows = [], [], []
         self._dim_rows, self._cont_rows, self._lathe = [], [], None

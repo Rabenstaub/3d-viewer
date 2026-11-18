@@ -3465,18 +3465,28 @@ class MainWindow(QtWidgets.QMainWindow):
         cands = {"X": [(0, 4), (1, 5), (2, 6), (3, 7)], "Y": [(0, 2), (1, 3), (4, 6), (5, 7)],
                  "Z": [(0, 1), (2, 3), (4, 5), (6, 7)]}
         csc, _ = self.view.to_screen(center[None])
+        # Beschriftung nach dem aktuellen Nullpunkt: die Achse entlang der Bauteil-Längsachse heißt „Länge“
+        try:
+            _, md = core.main_axis(m)
+        except Exception:
+            md = None
+        words = {"X": "", "Y": "", "Z": ""}
+        if md is not None:
+            for i, ax in enumerate("XYZ"):
+                words[ax] = " (Länge)" if abs(float(w.R[i] @ md)) > 0.999 else (
+                    " (quer)" if abs(float(w.R[i] @ md)) < 1e-3 else "")
         for ax in "XYZ":
             # außen liegende Kante (am weitesten von der Bildmitte des Kastens) beschriften
             mids = [to_model((corners[a] + corners[b]) / 2) for a, b in cands[ax]]
             sc, _ = self.view.to_screen(np.array(mids))
             mid = mids[int(np.argmax(np.linalg.norm(sc - csc[0], axis=1)))]
-            lab = {"X": "X (Höhe)", "Y": "Y (Breite)", "Z": "Z (Länge)"}[ax]
+            lab = ax + words[ax]
             items.append(gl.GLTextItem(pos=mid, text=f"{lab} {fmt(size['XYZ'.index(ax)])}", color=col, font=font,
                                        alignment=self._align_for(mid, center)))
         for it in items:
             self.view.addItem(it)
         self.box_items = items
-        self.status.showMessage(f"Außenmaße (Nullpunkt-KS):  X {fmt(size[0])}  ×  Y {fmt(size[1])}  ×  Z {fmt(size[2])} mm"
+        self.status.showMessage(f"Außenmaße im Nullpunkt „{w.name}“:  X {fmt(size[0])}  ×  Y {fmt(size[1])}  ×  Z {fmt(size[2])} mm"
                                 f"   |   Ø max {fmt(2 * max(np.hypot(P[:, 0], P[:, 1])))} mm")
 
     # ---------------- Schnitt ----------------

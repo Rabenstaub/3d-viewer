@@ -4466,7 +4466,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 lpos = self._entity_center(self.sel[1])
             items += self._axis_lines(self.sel[:2], seg)
             if rows and lpos is not None:
-                lines = [_re.sub(r"<[^>]+>", "", f"{k}: {v}") for k, v in rows[:3]]
+                nshow = 5 if rows[0][0] in ("Absatz (radial)", "Wandstärke") and any(
+                    k == "Länge (axial)" for k, _ in rows) else 3
+                lines = [_re.sub(r"<[^>]+>", "", f"{k}: {v}") for k, v in rows[:nshow]]
                 self.sel_callouts = [self._callout(lpos, "\n".join(lines))]
                 self._sync_callouts()
             for it in items:

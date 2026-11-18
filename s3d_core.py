@@ -940,14 +940,19 @@ def measure_special(e1, e2, wcs):
                 cc = [x["e"].face.concavity if x["e"].kind == "face" else "" for x in (i1, i2)]
                 label = "Wandstärke" if set(cc) == {"0", "1"} else "Absatz (radial)"
                 rows.append((label, f"<b>{fmt(abs(R1 - R2))} mm</b>"))
-                rows.append(("Ø groß", f"{fmt(2 * max(R1, R2))} mm"))
-                rows.append(("Ø klein", f"{fmt(2 * min(R1, R2))} mm"))
-                rows.append(("Ø-Differenz", f"{fmt(2 * abs(R1 - R2))} mm"))
                 a_mid = (max(i1["lo"], lo2) + min(i1["hi"], hi2)) / 2
                 if max(i1["lo"], lo2) > min(i1["hi"], hi2):
                     a_mid = (i1["lo"] + i1["hi"]) / 2
                     gap = max(i1["lo"], lo2) - min(i1["hi"], hi2)
-                    rows.append(("Abstand (axial)", f"{fmt(gap)} mm"))
+                    # z. B. Fase/Kegel zwischen zwei Kreiskanten: Länge in Z und Winkel – so wie die Steuerung
+                    # sie haben will (Startpunkt Z, Länge, Winkel)
+                    rows.append(("Länge (axial)", f"<b>{fmt(gap)} mm</b>"))
+                    if gap > 1e-9 and abs(R1 - R2) > 1e-9:
+                        ang = math.degrees(math.atan2(abs(R1 - R2), gap))
+                        rows.append(("Winkel zur Achse", f"<b>{fmt(ang, 3)}°</b>  (zur Planfläche {fmt(90 - ang, 3)}°)"))
+                rows.append(("Ø groß", f"{fmt(2 * max(R1, R2))} mm"))
+                rows.append(("Ø klein", f"{fmt(2 * min(R1, R2))} mm"))
+                rows.append(("Ø-Differenz", f"{fmt(2 * abs(R1 - R2))} mm"))
                 seg = (o + a_mid * d + R1 * u, o + a_mid * d + R2 * u)
             else:
                 rows.append(("Gleicher Ø", f"{fmt(2 * R1)} mm"))

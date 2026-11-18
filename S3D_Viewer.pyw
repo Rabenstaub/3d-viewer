@@ -4439,6 +4439,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._show_thread_overlay(self._thread_for_entity(e))
             elif e.kind == "face" and e.face.ftype in ("TORUS", "SPHERE") and self._arc_info(e.ref) is not None:
                 self._show_arc_overlay(e.ref)
+            elif e.kind == "face" and isinstance(e.face.surf, core.RevSurf) and e.face.surf.kind == "CONE" and \
+                    self._axial_extent(e.ref) is not None:
+                ax = self._axial_extent(e.ref)
+                hw = e.face.surf.half_angle
+                (aA, rA), (aB, rB) = ax["ends"]
+                txt = (f"Kegel/Fase {fmt(hw, 3)}°\nLänge (axial) {fmt(ax['L'])}"
+                       + (" bis Ecke" if ax["corner"] else "") +
+                       f"\nØ {fmt(2 * max(rA, rB))} → Ø {fmt(2 * min(rA, rB))}")
+                self.sel_callouts = [self._callout(self._entity_center(e), txt)]
+                self._sync_callouts()
             else:
                 dia = e.diameter()
                 if dia:
@@ -4743,6 +4753,58 @@ class MainWindow(QtWidgets.QMainWindow):
             self.view.addItem(it)
         self.items_overlay = list(self.items_overlay) + items
 
+    def _axial_extent(self, fi):
+        """Länge einer Dreh-Fläche (Kegel/Fase, Zylinder) entlang ihrer Achse, Z von/bis und Ø an den Enden –
+        bei gelöschtem Radius (scharfe Ecke) zusätzlich bis zur gedachten Ecke."""
+        m, w = self.model, self.wcs
+        f = m.faces[fi]
+        s = f.surf
+        if not isinstance(s, core.RevSurf):
+            return None
+        d = core.unit(s.d)
+        V = f.triangles.reshape(-1, 3) - s.o
+        a = V @ d
+        rho = np.linalg.norm(V - np.outer(a, d), axis=1)
+        a0, a1 = float(a.min()), float(a.max())
+        r0 = float(rho[a <= a0 + 1e-3].mean())
+        r1 = float(rho[a >= a1 - 1e-3].mean())
+        ends = [[a0, r0], [a1, r1]]
+        # gedachte scharfe Ecken (gelöschter Radius) auf der Verlängerung dieser Fläche
+        corner = [False, False]
+        slope = (r1 - r0) / (a1 - a0) if a1 - a0 > 1e-9 else 0.0
+        for k, ed in m.edges.items():
+            if not str(k).startswith("Ecke-") or ed.center is None:
+                continue
+            if abs(abs(float(core.unit(ed.normal) @ d)) - 1) > 1e-6:
+                continue
+            q = ed.center - s.o
+            ac = float(q @ d)
+            if np.linalg.norm(q - ac * d) > 1e-4:
+                continue
+            rc = float(ed.radius)
+            if abs(r0 + slope * (ac - a0) - rc) > 2e-3:
+                continue
+            if ac < a0 - 1e-6 and a0 - ac < 10.0:
+                ends[0] = [ac, rc]; corner[0] = True
+            elif ac > a1 + 1e-6 and ac - a1 < 10.0:
+                ends[1] = [ac, rc]; corner[1] = True
+        zsg = float(w.dir_to_wcs(d)[2])
+        lathe = abs(abs(zsg) - 1) < 1e-6
+        Z = lambda aa: float(w.to_wcs(s.o + aa * d)[2])
+        L_face = a1 - a0
+        L = ends[1][0] - ends[0][0]
+        rows = [("Länge (axial)", f"<b>{fmt(L)} mm</b>" + ("  (bis scharfe Ecke)" if any(corner) else ""))]
+        if any(corner):
+            rows.append(("Länge der Fläche selbst", f"{fmt(L_face)} mm (mit Radius)"))
+        e_sorted = sorted(ends, key=lambda x: Z(x[0])) if lathe else ends
+        if lathe:
+            rows.append(("Z von / bis", f"<b>{fmt(Z(e_sorted[0][0]))}</b> / <b>{fmt(Z(e_sorted[1][0]))}</b>"))
+            rows.append(("Ø bei Z " + fmt(Z(e_sorted[0][0])), fmt(2 * e_sorted[0][1])))
+            rows.append(("Ø bei Z " + fmt(Z(e_sorted[1][0])), fmt(2 * e_sorted[1][1])))
+        else:
+            rows += [("Ø", fmt(2 * ends[0][1])), ("Ø", fmt(2 * ends[1][1]))]
+        return {"rows": rows, "L": L, "corner": any(corner), "ends": ends}
+
     def _show_selection_text_only(self):
         rows = [(f"{i + 1}.", e.label()) for i, e in enumerate(self.sel)]
         html = html_table(rows, f"{len(self.sel)} Elemente gewählt")
@@ -4803,11 +4865,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(s, core.RevSurf):
             if s.kind == "CYLINDER":
                 rows += [("Durchmesser", f"<b>Ø {fmt(2 * s.radius)} mm</b>"), ("Radius", fmt(s.radius))]
+                ax = self._axial_extent(e.ref)
+                if ax is not None and f.concavity != "1" or (ax is not None and f.face_angle and f.face_angle >= 359):
+                    rows += [r_ for r_ in ax["rows"] if not r_[0].startswith("Ø")]
             elif s.kind == "CONE":
                 rows.append(("Kegel-Halbwinkel", f"{fmt(s.half_angle, 3)}°  (Spitze {fmt(2 * s.half_angle, 3)}°)"))
-                for r in (f.radius1, f.radius2):
-                    if r is not None:
-                        rows.append(("Ø", fmt(2 * r)))
+                ax = self._axial_extent(e.ref)
+                if ax is not None:
+                    rows += ax["rows"]
+                else:
+                    for r in (f.radius1, f.radius2):
+                        if r is not None:
+                            rows.append(("Ø", fmt(2 * r)))
             elif s.kind == "TORUS":
                 ap = self._arc_info(e.ref)
                 if ap is not None and ap["lathe"]:

@@ -87,7 +87,7 @@ from s3d_core import fmt
 
 APP_NAME = "3D Viewer"
 APP_URL = "https://github.com/Rabenstaub"
-APP_VERSION = "3.3.1"
+APP_VERSION = "3.3.2"
 
 # Beidseitige Beleuchtung: Kopflicht + Führungslicht + leichter Glanz
 _sh.Shaders.append(_sh.ShaderProgram("s3d_shaded", [

@@ -5,6 +5,13 @@ Dateien:   S3D_Viewer.pyw (Programm) + s3d_core.py (Geometrie-Kern) – beide im
 Starten:   S3D_Viewer.pyw doppelklicken (fehlende Pakete werden angeboten)
 EXE bauen: build.bat
 
+Neu in 3.3.2
+------------
+  Nullpunkt: Knopf „Alle Nullpunkt-Werte zurücksetzen“. Kasten-Beschriftung folgt dem Nullpunkt
+  (Länge/quer). Messung zweier Kreiskanten zeigt Länge (axial) und Winkel auch im Schild.
+  Kegel/Fase anklicken: Länge (axial), Z von/bis, Ø an den Enden – bei gelöschtem Radius bis
+  zur scharfen Ecke.
+
 Neu in 3.3.1
 ------------
   Fräskontur von Nuten: rote Punkte an jedem Übergang Linie ↔ Bogen auf der Nutkante (anklickbar:

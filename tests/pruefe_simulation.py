@@ -33,8 +33,8 @@ pruefe("Wendelnut", c.GrooveStock(m, c.groove_centerline(m, faces, step=0.2288))
 m, w = lade("Demo_Welle.s3d")
 for f in c.milling_features(m, w):
     st = c.PlaneStock(m, f, c.plane_floor_face(m, f))
-    D = 10.0 if f["kind"] == "Nut" else 16.0
-    st.plan(D / 2, 1.0, 0.6 * D)
-    pruefe(f["kind"], st, 99)
+    for D in ((4.0, 8.0, 9.6, 11.0) if f["kind"] == "Nut" else (8.0, 16.0)):
+        st.plan(D / 2, 1.0, 0.6 * D)
+        pruefe(f"{f['kind']} D{D:g}", st, 99.5)     # kein Steg in der Mitte
 print("Abweichungen:", len(fehler), *fehler)
 sys.exit(1 if fehler else 0)

@@ -3746,8 +3746,17 @@ class PlaneStock(_StockBase):
 
         def go(u, v, z, kind):
             pts.append((u, v, z, kind))
-        step_rows = max(1, int(round(ae / self.g)))
-        rows = list(range(0, len(self.v), step_rows))
+        ae = min(ae, 1.8 * Rt)                       # Bahnabstand nie größer als der Fräser
+        jv = np.nonzero(allowed.any(0))[0]
+        v_lo, v_hi = self.v[jv[0]], self.v[jv[-1]]
+        nrow = max(1, int(math.ceil((v_hi - v_lo) / ae - 1e-9)) + 1)
+        vs = np.linspace(v_lo, v_hi, nrow) if nrow > 1 else np.array([0.5 * (v_lo + v_hi)])
+        rows = []
+        for vv in vs:                                  # nächste Rasterzeile, die auch erlaubt ist
+            cand_j = jv[np.argsort(np.abs(self.v[jv] - vv))[:3]]
+            j = int(cand_j[0])
+            if not rows or j != rows[-1]:
+                rows.append(j)
         reach = int(math.ceil(Rt / self.g))
         bnd = _trace_boundary(allowed)
         for z in zs:

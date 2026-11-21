@@ -19,6 +19,8 @@ Neu in 3.5.0
   Eintauchen pendelnd (Standard), als Helix (wie Tornado-Fräsen) oder senkrecht, Winkel einstellbar.
   Strategie Schnecke von innen nach außen (Standard), von außen nach innen oder Zickzack.
   Schlichtaufmaß nach dem Schruppen grün, nicht erreichte Stellen rot.
+  Strg + Mausrad über Analyse/Daten/Detailansichten: Schrift nur dieses Fensters größer/kleiner
+  (wird gespeichert, Strg + Mausrad-Klick = 100 %).
 
 Neu in 3.4.0
 ------------

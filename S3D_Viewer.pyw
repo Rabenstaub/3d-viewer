@@ -2274,6 +2274,50 @@ class MainWindow(QtWidgets.QMainWindow):
         for t in self.findChildren(QtWidgets.QTableWidget):
             t.resizeColumnsToContents()
             t.horizontalHeader().setStretchLastSection(True)
+            t.verticalHeader().setDefaultSectionSize(int(t.fontMetrics().height() * 1.55) + 4)
+
+    # ---------------- Schriftgröße je Fenster (Strg + Mausrad) ----------------
+    DOCK_ZOOM_STEPS = (70, 80, 90, 100, 110, 125, 140, 160, 180, 200, 230, 260)
+
+    def _docks(self):
+        return [d for d in (getattr(self, "dock_left", None), getattr(self, "dock_right", None),
+                            getattr(self, "dock_views", None)) if d is not None]
+
+    def _dock_of(self, w):
+        while w is not None:
+            if isinstance(w, QtWidgets.QDockWidget) and w in self._docks():
+                return w
+            w = w.parentWidget()
+        return None
+
+    def _apply_dock_zoom(self, only=None):
+        for d in self._docks():
+            if only is not None and d is not only:
+                continue
+            try:
+                z = int(self.settings.value(f"dock_zoom_{d.objectName()}", 100))
+            except (TypeError, ValueError):
+                z = 100
+            d.setStyleSheet("" if z == 100 else f"QWidget {{ font-size:{self.font_pt * z / 100.0:.1f}pt; }}")
+        QtCore.QTimer.singleShot(0, self._resize_tables)
+
+    def step_dock_zoom(self, dock, direction):
+        key = f"dock_zoom_{dock.objectName()}"
+        try:
+            cur = int(self.settings.value(key, 100))
+        except (TypeError, ValueError):
+            cur = 100
+        st = self.DOCK_ZOOM_STEPS
+        if direction == 0:
+            new = 100
+        elif direction > 0:
+            new = next((x for x in st if x > cur), st[-1])
+        else:
+            new = next((x for x in reversed(st) if x < cur), st[0])
+        self.settings.setValue(key, new)
+        self._apply_dock_zoom(only=dock)
+        self.status.showMessage(f"Schrift „{dock.windowTitle()}“: {new} %   "
+                                "(Strg + Mausrad über dem Fenster, Strg + Mausrad-Klick = 100 %)")
 
     def set_ui_scale(self, pct):
         self.ui_scale = int(max(70, min(200, pct)))
@@ -2305,10 +2349,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.dock_left.setMinimumWidth(int(340 * k))
         if getattr(self, "btn_about", None) is not None:
             self.btn_about.setFixedSize(int(24 * k), int(24 * k))
+        self._apply_dock_zoom()
         QtCore.QTimer.singleShot(0, self._resize_tables)
         self._update_lock_badge()
 
     def eventFilter(self, obj, ev):
+        if ev.type() == QtCore.QEvent.Type.MouseButtonPress and ev.button() == Qt.MouseButton.MiddleButton \
+                and ev.modifiers() & Qt.KeyboardModifier.ControlModifier and isinstance(obj, QtWidgets.QWidget):
+            dock = self._dock_of(obj)
+            if dock is not None:
+                self.step_dock_zoom(dock, 0)
+                return True
         if ev.type() == QtCore.QEvent.Type.ShortcutOverride and isinstance(
                 obj, (QtWidgets.QLineEdit, QtWidgets.QAbstractSpinBox, QtWidgets.QKeySequenceEdit,
                       QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit)):
@@ -2319,6 +2370,17 @@ class MainWindow(QtWidgets.QMainWindow):
             mods = ev.modifiers()
             ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
             alt = bool(mods & Qt.KeyboardModifier.AltModifier)
+            if ctrl and not alt and isinstance(obj, QtWidgets.QWidget):
+                dock = self._dock_of(obj)
+                if dock is not None:
+                    # Strg + Mausrad über einem Seitenfenster: nur dessen Schrift größer/kleiner
+                    d = ev.angleDelta().y() or ev.angleDelta().x()
+                    if d:
+                        now = QtCore.QTime.currentTime().msecsSinceStartOfDay()
+                        if now - getattr(self, "_dock_wheel_t", -1000) > 90:
+                            self._dock_wheel_t = now
+                            self.step_dock_zoom(dock, 1 if d > 0 else -1)
+                    return True
             if ctrl and alt:
                 # AltGr (= Strg+Alt) + Mausrad: Bedienoberfläche größer/kleiner – überall im Fenster
                 d = ev.angleDelta().y() or ev.angleDelta().x()

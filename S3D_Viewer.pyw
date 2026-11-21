@@ -1349,7 +1349,7 @@ class SimDialog(QtWidgets.QDialog):
             self.plan_info += "<br>Eintauchen senkrecht – nur mit Fräser, der über Mitte schneidet!"
         else:
             n_h = inf.get("helix", 0)
-            txt = (f"Eintauchen {inf['ramps']}× mit {fmt(v['ang'], 1)}°"
+            txt = (f"Eintauchen {inf['ramps']}× mit {fmt(v['ang'], 1)}° (Rampe {fmt(v['ap'] / math.tan(math.radians(v['ang'])), 1)} mm je {fmt(v['ap'])} mm Zustellung)"
                    + (f": {n_h}× Helix, {inf['ramps'] - n_h}× pendelnd (kein Platz für den Kreis)"
                       if pl == "helix" and n_h < inf["ramps"] else (" als Helix" if pl == "helix" else " pendelnd")))
             if inf.get("fallback"):

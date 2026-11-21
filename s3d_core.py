@@ -3807,29 +3807,62 @@ class PlaneStock(_StockBase):
             return 0 <= i < len(self.u) and 0 <= j < len(self.v) and bool(state["alw"][i, j])
 
         def ramp_pendel(path, z0, z1, t):
+            """Schräg eintauchen mit genau dem eingestellten Winkel; endet am Anfang von path auf Tiefe z1.
+            Geschlossene Kontur: durchgehende Rampe entlang der Kontur (beginnt entsprechend weiter vorn).
+            Offene Bahn: so wenige Pendelwege wie möglich über die ganze Bahnlänge."""
             P = np.asarray(path, float)
-            seg = np.linalg.norm(np.diff(P, axis=0), axis=1) if len(P) > 1 else np.zeros(0)
-            Ltot = float(seg.sum())
+            if len(P) < 2:
+                return False
+            seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+            cum = np.concatenate([[0.0], np.cumsum(seg)])
+            Ltot = float(cum[-1])
             if Ltot < 0.5:
                 return False
-            Lp = min(Ltot, max(4.0 * state["Rc"], 3.0))
-            cum = np.concatenate([[0.0], np.cumsum(seg)])
-            k = int(np.searchsorted(cum, Lp))
-            S = list(P[:k]) if k > 0 else [P[0]]
-            if k < len(P):
-                f = (Lp - cum[k - 1]) / max(seg[k - 1], 1e-12)
-                S.append(P[k - 1] + f * (P[k] - P[k - 1]))
-            S = np.array(S)
-            sc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(S, axis=0), axis=1))])
-            n = max(2, int(math.ceil((z0 - z1) / (Lp * tanA) - 1e-9)))
-            n += n % 2                                  # gerade Anzahl: endet wieder am Einstiegspunkt
+            Lr = (z0 - z1) / tanA                       # nötige Rampenlänge
+            state["ramp_len"] = max(state.get("ramp_len", 0.0), Lr)
+
+            def at(d):
+                d = min(max(d, 0.0), Ltot)
+                k = min(int(np.searchsorted(cum, d, side="right")) - 1, len(seg) - 1)
+                f = (d - cum[k]) / max(seg[k], 1e-12)
+                return P[k] + f * (P[k + 1] - P[k])
+
+            def walk(d0, d1, za, zb):
+                """von Weg-Position d0 nach d1 entlang P (d1 < d0 = rückwärts), Höhe linear za→zb."""
+                inner = cum[(cum > min(d0, d1) + 1e-9) & (cum < max(d0, d1) - 1e-9)]
+                if d1 < d0:
+                    inner = inner[::-1]
+                for d in list(inner) + [d1]:
+                    q = at(d)
+                    go(q[0], q[1], za + (zb - za) * abs(d - d0) / max(abs(d1 - d0), 1e-12), "rampe", t)
+
+            closed = np.linalg.norm(P[0] - P[-1]) < 1e-6
+            if closed:
+                # am Konturanfang beginnen, vorwärts entlang der Kontur abwärts; gefräst wird danach ab dem Endpunkt
+                go(P[0][0], P[0][1], z0 + 0.2, "luft", t)
+                go(P[0][0], P[0][1], z0, "luft", t)
+                zc, d = z0, 0.0
+                while True:
+                    rest = (Ltot - d) if d > 1e-9 else Ltot
+                    zn = max(z1, zc - rest * tanA)
+                    walk(d, d + (zc - zn) / tanA, zc, zn)
+                    d = (d + (zc - zn) / tanA) % Ltot
+                    zc = zn
+                    if zc <= z1 + 1e-9:
+                        break
+                return True
+            n = max(1, int(math.ceil(Lr / Ltot - 1e-9)))
+            leg = Lr / n                                # alle Wege gleich lang, Winkel genau
+            d_start = leg if n % 2 == 1 else 0.0
+            q = at(d_start)
+            go(q[0], q[1], z0 + 0.2, "luft", t)
+            go(q[0], q[1], z0, "luft", t)
             dz = (z0 - z1) / n
+            pos = d_start
             for i in range(n):
-                fw = (i % 2 == 0)
-                pts_leg = S if fw else S[::-1]
-                d_leg = sc if fw else (sc[-1] - sc[::-1])
-                for q, d in zip(pts_leg[1:], d_leg[1:]):
-                    go(q[0], q[1], z0 - i * dz - dz * d / sc[-1], "rampe", t)
+                nxt = 0.0 if pos > 1e-9 else leg
+                walk(pos, nxt, z0 - i * dz, z0 - (i + 1) * dz)
+                pos = nxt
             return True
 
         def ramp_helix(u, v, z0, z1, t, path):
@@ -3870,6 +3903,7 @@ class PlaneStock(_StockBase):
                     return False
                 cu, cv = inner
                 a0 = 0.0
+                go(cu + rh, cv, z0 + 0.2, "luft", t)
                 go(cu + rh, cv, z0, "luft", t)
             C = 2 * math.pi * rh
             nrev = max(1, int(math.ceil((z0 - z1) / (C * tanA) - 1e-9)))
@@ -3889,19 +3923,21 @@ class PlaneStock(_StockBase):
             if pts:
                 go(pts[-1][0], pts[-1][1], z_safe, "luft", t)
             go(u, v, z_safe, "luft", t)
-            z0 = min(state["z_prev"] + 0.5, z_safe)
+            z0 = min(state["z_prev"], z_safe)           # Rampe beginnt auf Materialhöhe
             if plunge == "senkrecht" or z0 <= z + 1e-6:
                 go(u, v, z, "tauchen", t)
                 return
-            go(u, v, z0, "luft", t)
             done = False
             if plunge == "helix" and path is not None:
+                go(u, v, z0 + 0.2, "luft", t)
+                go(u, v, z0, "luft", t)
                 done = ramp_helix(u, v, z0, z, t, path)
                 state["helix"] = state.get("helix", 0) + int(done)
             if not done and path is not None:
                 done = ramp_pendel(path, z0, z, t)
             if not done:
                 state["fallback"] += 1
+                go(u, v, z0, "luft", t)
                 go(u, v, z, "tauchen", t)
             else:
                 state["ramps"] += 1
@@ -3945,6 +3981,9 @@ class PlaneStock(_StockBase):
             B = bnd[::max(1, int(round(0.4 / self.g)))]
             bu, bv = self.u[B[:, 0]], self.v[B[:, 1]]
             approach(bu[0], bv[0], z, t, path=np.column_stack([np.r_[bu, bu[0]], np.r_[bv, bv[0]]]))
+            o = int(np.argmin((bu - pts[-1][0]) ** 2 + (bv - pts[-1][1]) ** 2))
+            bu, bv = np.roll(bu, -o), np.roll(bv, -o)
+            go(bu[0], bv[0], z, "kontur", t)
             for a, b in zip(bu[1:], bv[1:]):
                 go(a, b, z, "kontur", t)
             go(bu[0], bv[0], z, "kontur", t)
@@ -3974,7 +4013,7 @@ class PlaneStock(_StockBase):
                 dmax = float(din[comp].max())
                 nlev = max(1, int(math.ceil(dmax / ae - 1e-9)))
                 step = dmax / nlev                     # gleichmäßig verteilt, letzte Runde auf dem Grat in der Mitte
-                levs = [i * step for i in range(nlev)] + ([max(dmax - 0.75 * g, 0.0)] if dmax > 0.75 * g else [])
+                levs = [i * step for i in range(nlev)] + ([max(dmax - 2.5 * g, 0.0)] if dmax > 2.5 * g and dmax - 2.5 * g > (nlev - 1) * step + g else [])
                 for lev in levs:
                     ring_area = comp & (din >= lev - 1e-9)
                     if not ring_area.any():
@@ -3997,6 +4036,9 @@ class PlaneStock(_StockBase):
                     if first:
                         approach(bu[0], bv[0], z, t, path=loop)
                         first = False
+                        o = int(np.argmin((bu - pts[-1][0]) ** 2 + (bv - pts[-1][1]) ** 2))
+                        bu, bv = np.roll(bu, -o), np.roll(bv, -o)
+                        go(bu[0], bv[0], z, "fraesen", t)
                     else:
                         go(bu[0], bv[0], z, "quer", t)
                     for a, b in zip(bu[1:], bv[1:]):
@@ -4058,7 +4100,7 @@ class PlaneStock(_StockBase):
         self.axes = np.repeat(self.n[None, :], len(dense), axis=0)
         self.reset()
         Lp = float(np.linalg.norm(np.diff(P3, axis=0), axis=1).sum())
-        info.update(blocks=len(pts), length=Lp, depth=self.Hmax, ramps=state["ramps"], fallback=state["fallback"],
+        info.update(blocks=len(pts), length=Lp, depth=self.Hmax, ramps=state["ramps"], fallback=state["fallback"], ramp_len=state.get("ramp_len", 0.0),
                     helix=state.get("helix", 0))
         # Probelauf: was bleibt ungewollt stehen (ohne das absichtliche Aufmaß)?
         self.cut_to(self.rough_end_k)

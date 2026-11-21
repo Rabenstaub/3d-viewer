@@ -3645,20 +3645,66 @@ def _trace_boundary(mask):
     ok = lambda p: 0 <= p[0] < H and 0 <= p[1] < W and mask[p]
     out = [start]
     cur, back = start, 6                           # von „links“ gekommen
+    first_move = None
     for _ in range(4 * mask.size):
         found = False
         for k in range(8):
             d = (back + 1 + k) % 8
             q = (cur[0] + nb[d][0], cur[1] + nb[d][1])
             if ok(q):
+                if cur == start:
+                    if first_move is None:
+                        first_move = d
+                    elif d == first_move:      # Start erneut in gleicher Richtung verlassen: Rand komplett
+                        return np.array(out[:-1])
                 back = (d + 4) % 8
                 cur = q
                 found = True
                 break
-        if not found or (cur == start and len(out) > 2):
+        if not found:
             break
         out.append(cur)
     return np.array(out)
+
+
+def _components(mask):
+    """Zusammenhängende Teilflächen (4er-Nachbarschaft) als Liste boolescher Masken."""
+    lab = np.zeros(mask.shape, int)
+    out = []
+    H, W = mask.shape
+    for start in map(tuple, np.argwhere(mask)):
+        if lab[start]:
+            continue
+        n = len(out) + 1
+        stack = [start]
+        lab[start] = n
+        cells = []
+        while stack:
+            i, j = stack.pop()
+            cells.append((i, j))
+            for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                a, b = i + di, j + dj
+                if 0 <= a < H and 0 <= b < W and mask[a, b] and not lab[a, b]:
+                    lab[a, b] = n
+                    stack.append((a, b))
+        m = np.zeros(mask.shape, bool)
+        ii = np.array(cells)
+        m[ii[:, 0], ii[:, 1]] = True
+        out.append(m)
+    return out
+
+
+def _dilate(mask, r):
+    """Quadratische Erweiterung um r Zellen."""
+    out = mask.copy()
+    for _ in range(int(r)):
+        o = out.copy()
+        o[1:, :] |= out[:-1, :]
+        o[:-1, :] |= out[1:, :]
+        o[:, 1:] |= out[:, :-1]
+        o[:, :-1] |= out[:, 1:]
+        out = o
+    return out
 
 
 class PlaneStock(_StockBase):
@@ -3733,7 +3779,8 @@ class PlaneStock(_StockBase):
             self._wdist = dist
         return self.mask & (self._wdist >= Rc - 0.5 * self.g)
 
-    def plan(self, Rt, ap, ae, safety=2.0, aw=0.0, af=0.0, finish=None, plunge="pendel", angle=3.0):
+    def plan(self, Rt, ap, ae, safety=2.0, aw=0.0, af=0.0, finish=None, plunge="pendel", angle=3.0,
+             strategy="schnecke_innen"):
         """Bahn erzeugen (Fräsermitte u, v, Höhe z über Grund, Werkzeug-Nr.).
         Schruppen mit Fräser Rt, Aufmaß aw an den Wänden und af am Grund; optional
         finish=dict(Rt=…, ap=…, ae=…): Schlichten mit 2. Fräser – erst Grund (Zickzack), dann Wand (Kontur).
@@ -3902,6 +3949,60 @@ class PlaneStock(_StockBase):
                 go(a, b, z, "kontur", t)
             go(bu[0], bv[0], z, "kontur", t)
 
+        def spiral(alw, z, ae, Rc, t, need_z):
+            """Konturparallel („Schnecke“): Ringe im Abstand ae, äußerer Ring = Kontur.
+            strategy „schnecke“ = von außen nach innen, „schnecke_innen“ = von innen nach außen."""
+            ae = min(ae, 1.8 * Rc)
+            present = self.top0 > need_z + 1e-6
+            region = alw & _dilate(present, math.ceil(Rc / self.g))
+            if not region.any():
+                return
+            g = self.g
+            for comp in _components(region):
+                # Abstand jeder Zelle zum Rand dieser Teilfläche
+                inner = comp.copy()
+                inner[1:-1, 1:-1] = comp[1:-1, 1:-1] & comp[:-2, 1:-1] & comp[2:, 1:-1] & comp[1:-1, :-2] & comp[1:-1, 2:]
+                edge = comp & ~inner
+                E = np.column_stack([self.UU[edge], self.VV[edge]])
+                Q = np.column_stack([self.UU[comp], self.VV[comp]])
+                dd = np.empty(len(Q))
+                for k in range(0, len(Q), 3000):
+                    dd[k:k + 3000] = np.sqrt(((Q[k:k + 3000, None, :] - E[None, :, :]) ** 2).sum(-1)).min(1)
+                din = np.full(comp.shape, -1.0)
+                din[comp] = dd
+                loops = []
+                dmax = float(din[comp].max())
+                nlev = max(1, int(math.ceil(dmax / ae - 1e-9)))
+                step = dmax / nlev                     # gleichmäßig verteilt, letzte Runde auf dem Grat in der Mitte
+                levs = [i * step for i in range(nlev)] + ([max(dmax - 0.75 * g, 0.0)] if dmax > 0.75 * g else [])
+                for lev in levs:
+                    ring_area = comp & (din >= lev - 1e-9)
+                    if not ring_area.any():
+                        continue
+                    for part in _components(ring_area):
+                        bnd = _trace_boundary(part)
+                        if len(bnd) == 0:
+                            continue
+                        B = bnd[::max(1, int(round(0.4 / g)))]
+                        loops.append((self.u[B[:, 0]], self.v[B[:, 1]]))
+                if strategy == "schnecke_innen":
+                    loops = loops[::-1]
+                first = True
+                for bu, bv in loops:
+                    if not first:
+                        # Ring am Punkt beginnen, der dem letzten Punkt am nächsten liegt
+                        o = int(np.argmin((bu - pts[-1][0]) ** 2 + (bv - pts[-1][1]) ** 2))
+                        bu, bv = np.roll(bu, -o), np.roll(bv, -o)
+                    loop = np.column_stack([np.r_[bu, bu[0]], np.r_[bv, bv[0]]])
+                    if first:
+                        approach(bu[0], bv[0], z, t, path=loop)
+                        first = False
+                    else:
+                        go(bu[0], bv[0], z, "quer", t)
+                    for a, b in zip(bu[1:], bv[1:]):
+                        go(a, b, z, "fraesen", t)
+                    go(bu[0], bv[0], z, "fraesen", t)
+
         def levels(ap, z_end):
             zs, z = [], self.Hmax
             while z > z_end + 1e-6:
@@ -3911,9 +4012,13 @@ class PlaneStock(_StockBase):
 
         zs = levels(ap, af)
         for z in zs:
-            zigzag(allowed, z, ae, Rt, 0, z)
-            contour(allowed, z, 0)
+            if strategy == "zickzack":
+                zigzag(allowed, z, ae, Rt, 0, z)
+                contour(allowed, z, 0)
+            else:
+                spiral(allowed, z, ae, Rt, 0, z)
             state["z_prev"] = z
+        rough_end = len(pts)
         radii = [Rt]
         info = dict(layers=len(zs), finish_layers=0)
         if finish:
@@ -3926,7 +4031,10 @@ class PlaneStock(_StockBase):
             go(pts[-1][0], pts[-1][1], z_safe, "wechsel", 1)
             state.update(Rc=R2, alw=alw2, z_prev=af)
             if af > 1e-9:
-                zigzag(alw2, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
+                if strategy == "zickzack":
+                    zigzag(alw2, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
+                else:
+                    spiral(alw2, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
             ap2 = finish.get("ap") or self.Hmax
             zs2 = levels(ap2, 0.0)
             state["z_prev"] = self.Hmax
@@ -3942,6 +4050,8 @@ class PlaneStock(_StockBase):
         P = np.array([(u, v, z, t) for u, v, z, _, t in pts], float)
         P3 = np.array([self.to3d(*p[:3]) for p in P])
         dense, self.block = _dense_poses(np.hstack([P3, P]), max(0.3 * min(radii), 0.15))
+        self.rough_end_k = int(np.searchsorted(self.block, rough_end)) if rough_end < len(pts) else len(dense) - 1
+        self.af, self.aw = af, aw
         self.poses = dense
         self.tips = dense[:, :3]
         self.tool_idx = np.round(dense[:, 6]).astype(int)
@@ -3951,6 +4061,8 @@ class PlaneStock(_StockBase):
         info.update(blocks=len(pts), length=Lp, depth=self.Hmax, ramps=state["ramps"], fallback=state["fallback"],
                     helix=state.get("helix", 0))
         # Probelauf: was bleibt ungewollt stehen (ohne das absichtliche Aufmaß)?
+        self.cut_to(self.rough_end_k)
+        self.rough_bad = self.mask & (self.top > af + 0.02) & (self._wdist > aw + 1.5 * self.g)
         self.cut_to(len(self.poses) - 1)
         z_ok = (0.0 if finish else af) + 0.02
         w_ok = 0.0 if finish else aw
@@ -4004,6 +4116,23 @@ class PlaneStock(_StockBase):
 
     def progress_text(self):
         return 100.0 * (1.0 - self.top[self.mask].sum() / max(self.top0[self.mask].sum(), 1e-9))
+
+    MAT = (0.80, 0.60, 0.34, 1.0)
+    ALLOW = (0.15, 0.72, 0.35, 1.0)
+    BAD = (0.85, 0.10, 0.10, 1.0)
+
+    def colors(self):
+        """Farben je Ecke: bronze = Rohmaterial; nach dem Schruppen grün = Schlichtaufmaß, rot = nicht erreicht."""
+        C = np.empty(self.top.shape + (4,), np.float32)
+        C[...] = self.MAT
+        if getattr(self, "rough_end_k", None) is not None and self.k >= self.rough_end_k and \
+                (self.af > 0 or self.aw > 0 or getattr(self, "rough_bad", None) is not None):
+            if self.af > 0 or self.aw > 0:
+                C[...] = self.ALLOW
+            bad = getattr(self, "rough_bad", None)
+            if bad is not None:
+                C[bad] = self.BAD
+        return C.reshape(-1, 4)
 
 
 def plane_floor_face(model, feat):

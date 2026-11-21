@@ -63,6 +63,18 @@ for f in c.milling_features(m, w):
         st.cut_to(len(st.poses) - 1)
         if st.progress_text() < 99.5:
             fehler.append(f"{f['kind']} {pl}: nur {st.progress_text():.1f} %")
+# Strategien: Schnecke innen/außen und Zickzack räumen aus, Aufmaß bleibt genau stehen und wird grün
+for f in c.milling_features(m, w):
+    st = c.PlaneStock(m, f, c.plane_floor_face(m, f))
+    for strat in ("schnecke_innen", "schnecke", "zickzack"):
+        inf = st.plan(3.0, 1.0, 3.6, strategy=strat, aw=0.1, af=0.1)
+        st.cut_to(st.rough_end_k)
+        top = st.top[st.mask & (st.top0 > 0.15)]
+        gruen = (st.colors()[:, 1] > 0.6).mean()
+        st.cut_to(len(st.poses) - 1)
+        print(f"{f['kind']:16s} {strat:15s} Weg {inf['length']:7.0f} mm  Aufmaß {top.min():.3f}  grün {gruen:.0%}")
+        if abs(top.min() - 0.1) > 1e-6 or gruen < 0.5 or inf["rest_area"] > 0:
+            fehler.append(f"{f['kind']} {strat}")
 # Zu großer Fräser: klare Meldung mit größtem möglichen Ø
 st = c.PlaneStock(m, c.milling_features(m, w)[0], c.plane_floor_face(m, c.milling_features(m, w)[0]))
 try:

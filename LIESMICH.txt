@@ -17,6 +17,8 @@ Neu in 3.5.0
   Bei Nut/Schlüsselfläche: Aufmaß Wand und Grund, danach Schlichten mit 2. Fräser (Grund, dann Wand).
   Warnung, wenn der Fräser nicht passt (mit größtem möglichem Ø) oder Ecken/Engstellen nicht erreicht.
   Eintauchen pendelnd (Standard), als Helix (wie Tornado-Fräsen) oder senkrecht, Winkel einstellbar.
+  Strategie Schnecke von innen nach außen (Standard), von außen nach innen oder Zickzack.
+  Schlichtaufmaß nach dem Schruppen grün, nicht erreichte Stellen rot.
 
 Neu in 3.4.0
 ------------

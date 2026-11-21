@@ -1242,11 +1242,17 @@ class SimDialog(QtWidgets.QDialog):
                 form.addRow(lab, sb)
                 self.sp[key] = sb
             form.addRow(QtWidgets.QLabel("<b>Schruppen</b>"))
+            self.strat = QtWidgets.QComboBox()
+            self.strat.addItem("Schnecke von innen nach außen (empfohlen)", "schnecke_innen")
+            self.strat.addItem("Schnecke von außen nach innen", "schnecke")
+            self.strat.addItem("Zickzack + Kontur", "zickzack")
+            self.strat.setCurrentIndex(max(self.strat.findData(st.value("sim_strat", "schnecke_innen")), 0))
+            form.addRow("Strategie", self.strat)
             add("D", "Fräser-Ø", hint, 0.5, 100.0)
             add("ap", "Zustellung je Schicht", 1.0, 0.05, 50.0, True)
-            add("ae", "Bahnabstand (Zickzack)", round(0.6 * hint, 2), 0.05, 100.0)
-            add("aw", "Aufmaß Wand (je Seite)", 0.0, 0.0, 5.0, True)
-            add("af", "Aufmaß Grund", 0.0, 0.0, 5.0, True)
+            add("ae", "Bahnabstand", round(0.6 * hint, 2), 0.05, 100.0)
+            add("aw", "Schlichtaufmaß Wand (je Seite)", 0.0, 0.0, 5.0, True)
+            add("af", "Schlichtaufmaß Grund", 0.0, 0.0, 5.0, True)
             self.plunge = QtWidgets.QComboBox()
             for t, k in (("pendelnd (schräg hin und her)", "pendel"), ("Helix (kreisförmig, wie Tornado-Fräsen)", "helix"),
                          ("senkrecht (nur Fräser über Mitte schneidend)", "senkrecht")):
@@ -1269,8 +1275,8 @@ class SimDialog(QtWidgets.QDialog):
                 for k in ("D2", "ap2", "ae2"):
                     self.sp[k].setEnabled(on)
                 if on and self.sp["aw"].value() == 0 and self.sp["af"].value() == 0:
-                    self.sp["aw"].setValue(0.3)
-                    self.sp["af"].setValue(0.2)
+                    self.sp["aw"].setValue(0.1)
+                    self.sp["af"].setValue(0.1)
             self.fin.toggled.connect(fin_toggle)
             fin_toggle(self.fin.isChecked())
             b = QtWidgets.QPushButton("Bahn neu berechnen")
@@ -1320,17 +1326,22 @@ class SimDialog(QtWidgets.QDialog):
             self.win.settings.setValue(f"sim_{k}", v[k])
         pl = self.plunge.currentData()
         self.win.settings.setValue("sim_plunge", pl)
+        strat = self.strat.currentData()
+        self.win.settings.setValue("sim_strat", strat)
         fin = self.fin.isChecked()
         self.win.settings.setValue("sim_fin", fin)
         try:
             inf = self.stock.plan(v["D"] / 2, v["ap"], v["ae"], aw=v["aw"], af=v["af"],
                                   finish=dict(Rt=v["D2"] / 2, ap=v["ap2"], ae=v["ae2"]) if fin else None,
-                                  plunge=pl, angle=v["ang"])
+                                  plunge=pl, angle=v["ang"], strategy=strat)
         except ValueError as ex:
             self.info.setText(f"<span style='color:#b00020'>{ex}</span>")
             return
         self.plan_info = (f"Schruppen Ø{fmt(v['D'])}: {inf['layers']} Schichten"
-                          + (f", Aufmaß Wand {fmt(v['aw'])} / Grund {fmt(v['af'])}" if v["aw"] or v["af"] else "")
+                          + {"schnecke": " als Schnecke von außen nach innen",
+                             "schnecke_innen": " als Schnecke von innen nach außen"}.get(strat, " im Zickzack")
+                          + (f", Schlichtaufmaß Wand {fmt(v['aw'])} / Grund {fmt(v['af'])} "
+                             f"(<span style='color:#1f9a4a'>grün</span> nach dem Schruppen)" if v["aw"] or v["af"] else "")
                           + (f" · Schlichten Ø{fmt(v['D2'])}: Grund + Wand in {inf['finish_layers']} "
                              f"{'Schicht' if inf['finish_layers'] == 1 else 'Schichten'}" if fin else "")
                           + f"<br>{inf['blocks']} Sätze · Weg {fmt(inf['length'])} mm · Tiefe {fmt(inf['depth'])} mm")
@@ -1421,8 +1432,10 @@ class SimDialog(QtWidgets.QDialog):
         if force:
             V, F = st.mesh()
             if len(F):
-                self.mat.setMeshData(vertexes=V, faces=F,
-                                     vertexColors=np.tile(np.array(self.MAT, np.float32), (len(V), 1)))
+                cols = st.colors() if hasattr(st, "colors") else None
+                if cols is None or len(cols) != len(V):
+                    cols = np.tile(np.array(self.MAT, np.float32), (len(V), 1))
+                self.mat.setMeshData(vertexes=V, faces=F, vertexColors=cols)
                 self.mat.setVisible(True)
             else:
                 self.mat.setVisible(False)

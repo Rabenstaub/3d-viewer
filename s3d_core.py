@@ -3171,3 +3171,224 @@ def ring_path_3d(model, wcs, path):
         cr = math.radians(c)
         out.append(mo + a * md + r * (math.cos(cr) * e1 + math.sin(cr) * e2))
     return np.array(out)
+
+
+# ---------------------------------------------------------------------------
+# Nut am Mantel (z. B. Wendelnut): Mittellinie Z/C aus den Nutflächen, Ausgabe W/H
+# ---------------------------------------------------------------------------
+
+def _ray_hits(p, d, A, B, tmax):
+    """Kleinstes t > 0, bei dem der Strahl p + t·d die Strecken A→B trifft (2D), sonst None."""
+    e = B - A
+    den = d[0] * e[:, 1] - d[1] * e[:, 0]
+    ok = np.abs(den) > 1e-12
+    w = A - p
+    t = np.where(ok, (w[:, 0] * e[:, 1] - w[:, 1] * e[:, 0]) / np.where(ok, den, 1), np.inf)
+    u = np.where(ok, (w[:, 0] * d[1] - w[:, 1] * d[0]) / np.where(ok, den, 1), -1)
+    hit = ok & (t > 1e-6) & (t < tmax) & (u >= -1e-9) & (u <= 1 + 1e-9)
+    return float(t[hit].min()) if hit.any() else None
+
+
+def groove_centerline(model, faces, step=0.25, r_step=None):
+    """Mittellinie einer Nut am Mantel (Fräser radial). faces: Flächen der Nut (Grund, ggf. Wände).
+    Der Nutgrund wird auf den Radius abgewickelt (a entlang der Achse, s = r·C); die Mitte zwischen den
+    beiden Rändern wird quer zur Nut bestimmt (exakt für Nuten konstanter Breite).
+    Ergebnis: dict(a=[…], c=[…] (Grad, stetig), r_floor, r_top, width, length, …) oder ValueError."""
+    mo, md = main_axis(model)
+    e1 = any_perp(md)
+    e2 = np.cross(md, e1)
+    T = np.concatenate([model.faces[i].triangles.reshape(-1, 3, 3) for i in faces])
+    C = T.mean(1) - mo
+    ca = C @ md
+    cr = C - np.outer(ca, md)
+    rho_c = np.linalg.norm(cr, axis=1)
+    n = np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0])
+    n /= np.linalg.norm(n, axis=1)[:, None] + 1e-15
+    u = cr / (rho_c[:, None] + 1e-15)
+    radial = np.abs(np.einsum("ij,ij->i", n, u)) > 0.8
+    Vall = T.reshape(-1, 3) - mo
+    rho_all = np.linalg.norm(Vall - np.outer(Vall @ md, md), axis=1)
+    r_min, r_top = float(rho_all.min()), float(rho_all.max())
+    floor = radial & (rho_c < r_min + max(0.35 * (r_top - r_min), 0.5))
+    if floor.sum() < 3:
+        raise ValueError("Kein Nutgrund gefunden – bitte den Grund der Nut (oder die ganze Nut) anklicken.")
+    TF = T[floor]
+    key = np.round(TF.reshape(-1, 3), 4)
+    uk, inv = np.unique(key, axis=0, return_inverse=True)
+    inv = inv.reshape(-1, 3)
+    q = uk - mo
+    qa = q @ md
+    qth = np.arctan2(q @ e2, q @ e1)
+    ref = math.atan2(float(np.sin(qth).mean()), float(np.cos(qth).mean()))
+    qth = (qth - ref + math.pi) % (2 * math.pi) - math.pi
+    qr = np.linalg.norm(q - np.outer(qa, md), axis=1)
+    r_fl = float(np.percentile(qr, 10))
+    Q = np.column_stack([qa, r_fl * qth])                                   # abgewickelt (a, s)
+    E = np.sort(np.concatenate([inv[:, [0, 1]], inv[:, [1, 2]], inv[:, [2, 0]]]), axis=1)
+    uE, cnt = np.unique(E, axis=0, return_counts=True)
+    bnd = uE[cnt == 1]
+    # nur der äußere Rand zählt (kleine Löcher in der Vernetzung des Grundes ignorieren)
+    par = {}
+
+    def root(v):
+        par.setdefault(v, v)
+        while par[v] != v:
+            par[v] = par[par[v]]
+            v = par[v]
+        return v
+    for x, y in bnd:
+        par[root(int(x))] = root(int(y))
+    lens = {}
+    for x, y in bnd:
+        r_ = root(int(x))
+        lens[r_] = lens.get(r_, 0.0) + float(np.linalg.norm(Q[x] - Q[y]))
+    main_r = max(lens, key=lens.get)
+    bnd = np.array([e for e in bnd if root(int(e[0])) == main_r])
+    A, B = Q[bnd[:, 0]], Q[bnd[:, 1]]
+    span = float(np.linalg.norm(Q.max(0) - Q.min(0)))
+    # grobe Mitte: von jedem Randpunkt quer (beide Richtungen) zum gegenüberliegenden Rand
+    mids, widths = [], []
+    for k, (x, y) in enumerate(bnd):
+        p = 0.5 * (Q[x] + Q[y])
+        t = Q[y] - Q[x]
+        L = np.linalg.norm(t)
+        if L < 1e-9:
+            continue
+        nn = np.array([-t[1], t[0]]) / L
+        for sgn in (1, -1):
+            hit = _ray_hits(p + sgn * nn * 1e-6, sgn * nn, A, B, span)
+            if hit is not None:
+                mids.append(p + sgn * nn * hit / 2)
+                widths.append(hit)
+    if len(mids) < 4:
+        raise ValueError("Nutränder konnten nicht bestimmt werden.")
+    mids, widths = np.array(mids), np.array(widths)
+    w0 = float(np.median(widths))
+    good = np.abs(widths - w0) < 0.08 * w0
+    M = mids[good]
+    # Reihenfolge: Hauptrichtung der Punktwolke, dann glätten über Abschnitte
+    cen = M.mean(0)
+    _, _, vt = np.linalg.svd(M - cen)
+    dirv = vt[0]
+    M = M[np.argsort((M - cen) @ dirv)]
+    # Kette über nächste Nachbarn (auch bei stark gekrümmten Nuten)
+    order, used = [0], np.zeros(len(M), bool)
+    used[0] = True
+    for _ in range(len(M) - 1):
+        d = np.linalg.norm(M - M[order[-1]], axis=1)
+        d[used] = np.inf
+        j = int(np.argmin(d))
+        order.append(j)
+        used[j] = True
+    M = M[order]
+    seg = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(M, axis=0), axis=1))]
+    total = seg[-1]
+    nb = max(8, int(total / max(0.5, 0.1 * w0)))
+    grid = np.linspace(0, total, nb + 1)
+    cc = []
+    for g0, g1 in zip(grid[:-1], grid[1:]):
+        sel = (seg >= g0) & (seg <= g1)
+        if sel.any():
+            cc.append(M[sel].mean(0))
+    cc = np.array(cc)
+
+    # genau: quer zur Mittellinie auf beide Ränder messen und mitteln (2 Durchgänge)
+    def refine(P):
+        out, ws = [], []
+        for i in range(len(P)):
+            t = P[min(i + 1, len(P) - 1)] - P[max(i - 1, 0)]
+            t /= np.linalg.norm(t) + 1e-15
+            nn = np.array([-t[1], t[0]])
+            h1 = _ray_hits(P[i], nn, A, B, 2 * w0)
+            h2 = _ray_hits(P[i], -nn, A, B, 2 * w0)
+            if h1 is None or h2 is None or abs(h1 + h2 - w0) > 0.08 * w0:
+                out.append(P[i]); ws.append(np.nan)
+                continue
+            out.append(P[i] + nn * (h1 - h2) / 2)
+            ws.append(h1 + h2)
+        return np.array(out), np.array(ws)
+    cc, _ = refine(cc)
+    cc, ws = refine(cc)
+    ok = ~np.isnan(ws)
+    if ok.sum() < 2:
+        raise ValueError("Nutmitte konnte nicht sicher bestimmt werden.")
+    cc = cc[ok]
+    # Enden: bis zur gedachten Fräsermitte in den Endrundungen bzw. bis zum Rand verlängern
+    for end in (0, -1):
+        P0 = cc[end]
+        t = cc[end] - cc[1 if end == 0 else -2]
+        t /= np.linalg.norm(t) + 1e-15
+        h = _ray_hits(P0, t, A, B, 3 * w0)
+        if h is not None and h > w0 / 2 + 1e-6:
+            P1 = P0 + t * (h - w0 / 2)
+            cc = np.vstack([P1, cc]) if end == 0 else np.vstack([cc, P1])
+    # gleichmäßig neu abtasten: Schrittlänge auf dem Radius r_step (Standard: Mantel, wie bei CAM üblich)
+    rs = r_top if r_step is None else r_step
+    D = np.column_stack([cc[:, 0], cc[:, 1] / r_fl * rs])
+    sl = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(D, axis=0), axis=1))]
+    nst = max(1, int(round(sl[-1] / step)))
+    g = np.linspace(0, sl[-1], nst + 1)
+    a_s = np.interp(g, sl, D[:, 0])
+    th = np.interp(g, sl, D[:, 1]) / rs + ref                               # rad, stetig
+    return dict(a=a_s, c=np.degrees(th), r_floor=r_fl, r_top=r_top, r_step=rs, width=w0, length=float(sl[-1]),
+                step=float(sl[-1] / nst), raw=cc, ref=ref)
+
+
+def groove_eia(model, wcs, cl, F=100.0, S=1500, decimals=6, w_neg=True, reverse=False, h_sign=1.0,
+               f_comp=False, name="NUT", absolute=False):
+    """Nut-Mittellinie als DIN-ISO-Unterprogramm wie bei Mazak-Wendelnuten: G01 mit W (Z) und H (C) inkrementell
+    (Summen gehen genau auf), wahlweise absolut Z/C."""
+    mo, md = main_axis(model)
+    e1, e2 = angle_frame(md, wcs)
+    a, c = np.array(cl["a"], float), np.array(cl["c"], float)
+    # C im Nullpunkt-KS: Winkel des Achs-Rahmens berücksichtigen
+    u0 = any_perp(md)
+    v0 = np.cross(md, u0)
+    th = np.radians(c)
+    vec = np.outer(np.cos(th), u0) + np.outer(np.sin(th), v0)
+    cw = np.degrees(np.unwrap(np.arctan2(vec @ e2, vec @ e1)))
+    Z = np.array([float(wcs.to_wcs(mo + x * md)[2]) for x in a])
+    if (Z[-1] < Z[0]) != reverse:
+        Z, cw = Z[::-1], cw[::-1]
+    zf = -1.0 if w_neg else 1.0
+    q = 10.0 ** decimals
+    lines = [f"({name} - NUTMITTE, G01 {'ABSOLUT Z/C' if absolute else 'INKREMENTELL W/H'}, NUR BAHN)",
+             f"(STARTPUNKT: X{2 * cl['r_floor']:.3f} (NUTGRUND) Z{Z[0] * zf:.3f} C{round(cw[0] * h_sign, 3) % 360:.3f})",
+             f"(NUTBREITE {cl['width']:.3f} - LAENGE Z {abs(Z[-1] - Z[0]):.3f} - DREHUNG C {(cw[-1] - cw[0]) * h_sign:.3f})",
+             f"S{int(S)}", f"F{F:g}", "G01"]
+    acc = np.zeros(2)
+    lastF = F
+    L_real = 0.0
+    for i in range(1, len(Z)):
+        dz = (Z[i] - Z[i - 1]) * zf
+        dh = (cw[i] - cw[i - 1]) * h_sign
+        seg = math.hypot(Z[i] - Z[i - 1], cl["r_floor"] * math.radians(cw[i] - cw[i - 1]))
+        L_real += seg
+        if absolute:
+            parts = [f"Z{Z[i] * zf:.{decimals}f}", f"C{(cw[i] * h_sign):.{decimals}f}"]
+            cmd = math.hypot(dz, dh)
+        else:
+            ex = np.array([(Z[i] - Z[0]) * zf, (cw[i] - cw[0]) * h_sign])
+            out = np.round(ex * q) / q - acc
+            acc += out
+            parts = [f"W{out[0]:.{decimals}f}", f"H{out[1]:.{decimals}f}"]
+            cmd = math.hypot(out[0], out[1])
+        if f_comp and seg > 1e-9:
+            fb = F * cmd / seg
+            if abs(fb - lastF) > 0.01 * F:
+                parts.append(f"F{fb:.1f}")
+                lastF = fb
+        lines.append(" ".join(parts))
+    lines.append("M99")
+    info = dict(blocks=len(Z) - 1, W=float((Z[-1] - Z[0]) * zf), H=float((cw[-1] - cw[0]) * h_sign), length=L_real,
+                minutes=L_real / F if F > 0 else 0.0, z0=float(Z[0]), c0=float(cw[0] * h_sign))
+    return "\r\n".join(lines) + "\r\n", info
+
+
+def groove_path_3d(model, cl, radius=None):
+    mo, md = main_axis(model)
+    u0 = any_perp(md)
+    v0 = np.cross(md, u0)
+    r = cl["r_floor"] if radius is None else radius
+    th = np.radians(np.asarray(cl["c"], float))
+    return mo + np.outer(cl["a"], md) + r * (np.outer(np.cos(th), u0) + np.outer(np.sin(th), v0))

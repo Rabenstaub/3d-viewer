@@ -5,6 +5,14 @@ Dateien:   S3D_Viewer.pyw (Programm) + s3d_core.py (Geometrie-Kern) – beide im
 Starten:   S3D_Viewer.pyw doppelklicken (fehlende Pakete werden angeboten)
 EXE bauen: build.bat
 
+Neu in 3.5.0
+------------
+  Nut am Mantel (Wendelnut) → DIN-ISO-Unterprogramm: Mittellinie der Nut wird aus dem Modell
+  geholt und als G01 mit inkrementellen W/H (Z, C in Grad) und M99 ausgegeben – gleich lange
+  Schritte wie bei CAM-Programmen, Summen gehen genau auf. Drehteil → Fräsen → „Nut am Mantel …“.
+  Vorschau im Bild, Start vom anderen Ende, C-Drehsinn, absolut Z/C, CSV der Mittellinie.
+  Neues Demo-Teil demo\Demo_Wendelnut.s3d.
+
 Neu in 3.4.0
 ------------
   Ringtasche in der Stirnseite → DIN-ISO-Unterprogramm: Wendel-Fräsbahn (C dreht, Z taucht

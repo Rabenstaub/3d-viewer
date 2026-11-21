@@ -87,7 +87,7 @@ from s3d_core import fmt
 
 APP_NAME = "3D Viewer"
 APP_URL = "https://github.com/Rabenstaub"
-APP_VERSION = "3.4.0"
+APP_VERSION = "3.5.0"
 
 # Beidseitige Beleuchtung: Kopflicht + Führungslicht + leichter Glanz
 _sh.Shaders.append(_sh.ShaderProgram("s3d_shaded", [
@@ -1032,6 +1032,162 @@ class RingPocketDialog(QtWidgets.QDialog):
         self.win.settings.setValue("eia_dir", os.path.dirname(fn))
         with open(fn, "w", encoding="ascii", errors="replace", newline="") as fh:
             fh.write(self.txt)
+        self.win.status.showMessage(f"Gespeichert: {fn}")
+
+    def closeEvent(self, ev):
+        self.clear_preview()
+        super().closeEvent(ev)
+
+
+class GrooveDialog(QtWidgets.QDialog):
+    """Nut am Mantel (z. B. Wendelnut): Mittellinie Z/C als DIN-ISO-Unterprogramm (G01 W/H wie bei Mazak)."""
+
+    def __init__(self, win, faces):
+        super().__init__(win)
+        self.win, self.faces = win, faces
+        self.setWindowTitle("Nut am Mantel → DIN-ISO-Unterprogramm")
+        self.setModal(False)
+        self.resize(560, 640)
+        lay = QtWidgets.QVBoxLayout(self)
+        self.head = QtWidgets.QLabel("")
+        self.head.setWordWrap(True)
+        lay.addWidget(self.head)
+        form = QtWidgets.QFormLayout()
+        st = win.settings
+
+        def dsb(key, val, lo, hi, dec):
+            sb = QtWidgets.QDoubleSpinBox()
+            sb.setRange(lo, hi)
+            sb.setDecimals(dec)
+            try:
+                sb.setValue(float(st.value(f"groove_{key}", val)))
+            except (TypeError, ValueError):
+                sb.setValue(val)
+            return sb
+        self.step = dsb("step", 0.25, 0.01, 10.0, 4)
+        form.addRow("Schrittlänge auf der Bahn (mm)", self.step)
+        self.rdia = dsb("rdia", 0.0, 0.0, 5000.0, 3)
+        self.rdia.setSpecialValueText("Mantel-Ø (wie CAM üblich)")
+        form.addRow("Schrittlänge gemessen am Ø", self.rdia)
+        self.S = QtWidgets.QSpinBox()
+        self.S.setRange(1, 60000)
+        self.S.setValue(int(float(st.value("groove_S", 1500))))
+        form.addRow("Drehzahl S", self.S)
+        self.F = dsb("F", 100.0, 1.0, 20000.0, 1)
+        form.addRow("Vorschub F", self.F)
+        self.dec = QtWidgets.QSpinBox()
+        self.dec.setRange(3, 6)
+        self.dec.setValue(6)
+        form.addRow("Nachkommastellen", self.dec)
+        self.wneg = QtWidgets.QCheckBox("Z ins Material = W negativ (Z0 an der Stirn, wie bei Mazak)")
+        self.wneg.setChecked(True)
+        form.addRow("", self.wneg)
+        self.rev = QtWidgets.QCheckBox("Nut vom anderen Ende her fräsen")
+        form.addRow("", self.rev)
+        self.hneg = QtWidgets.QCheckBox("C-Drehsinn umkehren (H mit anderem Vorzeichen)")
+        form.addRow("", self.hneg)
+        self.absz = QtWidgets.QCheckBox("Absolut Z/C statt inkrementell W/H")
+        form.addRow("", self.absz)
+        self.fcomp = QtWidgets.QCheckBox("F je Satz umrechnen (Steuerung zählt Grad wie mm)")
+        form.addRow("", self.fcomp)
+        self.prog = QtWidgets.QLineEdit("3626")
+        form.addRow("Programmnummer / Dateiname", self.prog)
+        lay.addLayout(form)
+        self.summary = QtWidgets.QLabel("")
+        self.summary.setWordWrap(True)
+        lay.addWidget(self.summary)
+        bl = QtWidgets.QHBoxLayout()
+        for t, f in (("Berechnen + im Bild zeigen", self.preview), ("Als .EIA speichern …", self.save),
+                     ("Mittellinie als CSV …", self.save_csv), ("Schließen", self.close)):
+            b = QtWidgets.QPushButton(t)
+            b.clicked.connect(f)
+            bl.addWidget(b)
+        lay.addLayout(bl)
+        warn = QtWidgets.QLabel("Nur die Bahn der Nutmitte (Fräser radial, Spitze auf dem Nutgrund) – ohne Anfahren, "
+                                "Zustellung und Kollisionsprüfung. Erst simulieren, dann in der Luft testen.")
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color:#b05a00")
+        lay.addWidget(warn)
+        self.items, self.cl, self.txt = [], None, ""
+        self.preview()
+
+    def compute(self):
+        st = self.win.settings
+        for k, sb in (("step", self.step), ("rdia", self.rdia), ("F", self.F)):
+            st.setValue(f"groove_{k}", sb.value())
+        st.setValue("groove_S", self.S.value())
+        try:
+            cl = core.groove_centerline(self.win.model, self.faces, step=self.step.value(),
+                                        r_step=(self.rdia.value() / 2 if self.rdia.value() > 0 else None))
+        except ValueError as ex:
+            self.summary.setText(f"<span style='color:#b00020'>{ex}</span>")
+            return None
+        txt, inf = core.groove_eia(self.win.model, self.win.wcs, cl, F=self.F.value(), S=self.S.value(),
+                                   decimals=self.dec.value(), w_neg=self.wneg.isChecked(), reverse=self.rev.isChecked(),
+                                   h_sign=-1.0 if self.hneg.isChecked() else 1.0, f_comp=self.fcomp.isChecked(),
+                                   name=f"O{self.prog.text().strip()} NUT", absolute=self.absz.isChecked())
+        self.head.setText(
+            f"<b>Nut:</b> Breite {fmt(cl['width'])} · Grund X Ø{fmt(2 * cl['r_floor'])} · Mantel Ø{fmt(2 * cl['r_top'])}"
+            f" · Bahnlänge {fmt(cl['length'])}<br><span style='color:#6b7890'>Mittellinie aus dem Nutgrund, quer zur Nut "
+            "zwischen beiden Rändern gemessen. Schritte gleich lang, wie bei CAM-erzeugten Wendelnut-Programmen.</span>")
+        self.summary.setText(
+            f"<b>{inf['blocks']} Sätze · Summe W {fmt(inf['W'])} · H {fmt(inf['H'])}° · Schritt {fmt(cl['step'], 5)} mm</b><br>"
+            f"Start: Z {fmt(-inf['z0'] if self.wneg.isChecked() else inf['z0'])} · C {fmt(round(inf['c0'], 3) % 360, 3)}° · "
+            f"X Ø{fmt(2 * cl['r_floor'])} (Nutgrund)<br>"
+            f"Weg {fmt(inf['length'])} mm · ca. {fmt(inf['minutes'], 1)} min bei F{self.F.value():g}")
+        self.cl, self.txt = cl, txt
+        return cl
+
+    def preview(self):
+        cl = self.compute()
+        self.clear_preview()
+        if cl is None:
+            return
+        P = core.groove_path_3d(self.win.model, cl)
+        it = gl.GLLinePlotItem(pos=P, color=(0.95, 0.5, 0.0, 1.0), width=2.5, antialias=True, glOptions=GL_ONTOP)
+        it.setDepthValue(20)
+        ends = gl.GLScatterPlotItem(pos=P[[0, -1]], size=11, color=(0.86, 0.05, 0.05, 1.0), pxMode=True,
+                                    glOptions=GL_ONTOP)
+        ends.setDepthValue(22)
+        for x in (it, ends):
+            self.win.view.addItem(x)
+        self.items = [it, ends]
+
+    def clear_preview(self):
+        for it in self.items:
+            try:
+                self.win.view.removeItem(it)
+            except Exception:
+                pass
+        self.items = []
+
+    def save(self):
+        if self.compute() is None:
+            return
+        d = self.win.settings.value("eia_dir", "") or os.path.dirname(getattr(self.win, "model_path", "") or "")
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Unterprogramm speichern",
+                                                      os.path.join(d, f"{self.prog.text().strip() or 'NUT'}.EIA"),
+                                                      "Mazak EIA (*.EIA);;NC-Programm (*.nc *.txt);;Alle Dateien (*)")
+        if not fn:
+            return
+        self.win.settings.setValue("eia_dir", os.path.dirname(fn))
+        with open(fn, "w", encoding="ascii", errors="replace", newline="") as fh:
+            fh.write(self.txt)
+        self.win.status.showMessage(f"Gespeichert: {fn}")
+
+    def save_csv(self):
+        cl = self.compute()
+        if cl is None:
+            return
+        w = self.win.wcs
+        mo, md = core.main_axis(self.win.model)
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Mittellinie speichern", "Nutmitte.csv", "CSV (*.csv)")
+        if not fn:
+            return
+        with open(fn, "w", encoding="utf-8-sig", newline="") as fh:
+            fh.write("Nr;Z;C (°);X Ø Grund\r\n")
+            for i, (a, c) in enumerate(zip(cl["a"], cl["c"])):
+                fh.write(f"{i + 1};{fmt(float(w.to_wcs(mo + a * md)[2]))};{fmt(c, 4)};{fmt(2 * cl['r_floor'])}\r\n")
         self.win.status.showMessage(f"Gespeichert: {fn}")
 
     def closeEvent(self, ev):
@@ -4790,6 +4946,20 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             return []
 
+    def open_groove(self):
+        if self.model is None:
+            return
+        faces = sorted({e.ref for e in self.sel if e.kind == "face"})
+        if not faces:
+            QtWidgets.QMessageBox.information(self, APP_NAME, "Bitte zuerst die Nut anklicken – den Nutgrund, "
+                                              "gern mit Strg auch die Nutwände – und dann nochmal öffnen.")
+            return
+        dlg = getattr(self, "_groove_dlg", None)
+        if dlg is not None:
+            dlg.close()
+        self._groove_dlg = GrooveDialog(self, faces)
+        self._groove_dlg.show()
+
     def open_ring_pocket(self):
         """Ringtasche wählen (aus der Auswahl oder die einzige im Teil) und den Dialog öffnen."""
         if self.model is None:
@@ -5603,6 +5773,11 @@ class MainWindow(QtWidgets.QMainWindow):
         b.setToolTip("Umlaufende Tasche in der Stirnfläche (Grund, Außenwand, Nabe) als Wendel-Fräsbahn: "
                      "C dreht, Z taucht gleichzeitig ein – inkrementell U/W/H wie ein Mazak-EIA-Unterprogramm")
         b.clicked.connect(self.open_ring_pocket)
+        l5.addWidget(b)
+        b = QtWidgets.QPushButton("Nut am Mantel (Wendelnut) → DIN-ISO-Unterprogramm …")
+        b.setToolTip("Vorher die Nut anklicken (Grund, gern mit Strg auch die Wände). Die Mittellinie wird als Z/C-Bahn "
+                     "ausgegeben – G01 mit W/H inkrementell wie bei Mazak-Wendelnut-Programmen.")
+        b.clicked.connect(self.open_groove)
         l5.addWidget(b)
         tabs.addTab(w5, "Fräsen")
         self._groove_rows, self._tool_rows, self._mill_rows = [], [], []

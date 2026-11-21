@@ -3,6 +3,7 @@
 !demo/Demo_Welle.s3d
 !demo/Demo_Indexbolzen.s3d
 !demo/Demo_Stirntasche.s3d
+!demo/Demo_Wendelnut.s3d
 
 # Laufzeit / Build
 __pycache__/

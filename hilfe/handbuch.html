@@ -269,6 +269,32 @@ Im Fenster Fräser-Ø, Zustellung je Umdrehung, Bahnabstand, Winkelschritt, Aufm
 <div class="achtung">Nur die Fräsbahn – ohne Kollisionsprüfung mit Spannmittel und Werkzeughalter, ohne Schnittwert-Prüfung.
 Immer erst simulieren, dann in der Luft mit reduziertem Vorschub testen.</div>
 
+<h3>Nut am Mantel (Wendelnut) → DIN-ISO-Unterprogramm</h3>
+<p>Für Nuten, die am Umfang einer Welle laufen – gerade, dann eingedreht, wieder gerade (Kurvennut, Wendelnut, Steuernut) –
+holt der Viewer die <b>Mittellinie der Nut</b> aus dem Modell und gibt sie als Z/C-Bahn aus. Das Ergebnis sieht aus wie ein
+CAM-erzeugtes Mazak-Unterprogramm: <b>G01, dann nur Sätze mit inkrementellem W (Z) und H (C in Grad)</b>, gleich lange Schritte,
+am Ende <b>M99</b>. Damit läuft die Nut auch ohne Option für gleichzeitige Achsbewegungen im Mazatrol-Teil.</p>
+<p class="bild"><img src="bilder/wendelnut.png" width="380"></p>
+<p><b>So geht's:</b> den <b>Nutgrund</b> anklicken – am besten mit <b>Strg</b> auch die beiden Nutwände dazu (dann wird es am
+genauesten) → <b>Drehteil → Fräsen → „Nut am Mantel (Wendelnut) → DIN-ISO-Unterprogramm“</b>. Die orange Linie im Bild ist die
+gefundene Nutmitte, die roten Punkte sind Anfang und Ende. → <b>Als .EIA speichern</b>.</p>
+<p class="bild"><img src="bilder/wendelnut_dialog.png" width="560"></p>
+<table>
+<tr><th>Einstellung</th><th>Bedeutung</th></tr>
+<tr><td>Schrittlänge auf der Bahn</td><td>Länge eines Satzes. Wird leicht angepasst, damit alle Schritte genau gleich lang sind und das Ende genau getroffen wird. 0,2288 mm ergibt z. B. bei Ø40 und 95 mm Nut rund 450 Sätze.</td></tr>
+<tr><td>Schrittlänge gemessen am Ø</td><td>Auf welchem Durchmesser die Schrittlänge gemessen wird. Standard ist der Mantel-Ø, wie es CAM-Systeme machen. Für den Nutgrund dessen Ø eintragen.</td></tr>
+<tr><td>W negativ</td><td>Z0 an der Stirn, ins Material Minus (Mazak üblich).</td></tr>
+<tr><td>Vom anderen Ende her fräsen</td><td>Startet am anderen Nutende; W und H drehen das Vorzeichen.</td></tr>
+<tr><td>C-Drehsinn umkehren</td><td>Falls die Maschine C andersherum zählt als das Modell: H bekommt das andere Vorzeichen.</td></tr>
+<tr><td>Absolut Z/C</td><td>Statt W/H werden absolute Z- und C-Werte ausgegeben.</td></tr>
+<tr><td>Mittellinie als CSV</td><td>Alle Punkte (Z, C, X Ø) als Tabelle, z. B. zum Kontrollieren in Excel.</td></tr>
+</table>
+<p>Im Kopf des Programms stehen als Kommentar der <b>Startpunkt</b> (X Ø am Nutgrund, Z, C), die Nutbreite, die Länge in Z und die
+Drehung in C. Dorthin positionieren (Fräser radial, Spitze auf Nutgrund-Tiefe), dann das Unterprogramm aufrufen. Die Summen von
+W und H gehen genau auf, auch bei 6 Nachkommastellen. Die Nutbreite ist der Fräser-Ø – das Programm fährt nur die Mitte.</p>
+<div class="achtung">Nur die Bahn der Nutmitte – ohne Anfahren, Eintauchen, Zustellung und Kollisionsprüfung. Erst simulieren, dann
+in der Luft (Fräser vor die Stirn gesetzt) mit reduziertem Vorschub testen.</div>
+
 <a name="werkzeug"></a>
 <h2>15 Werkzeug: Welche Platte kommt hin?</h2>
 <p class="bild"><img src="bilder/d_werkzeug.png" width="820"></p>

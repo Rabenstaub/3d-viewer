@@ -3988,7 +3988,39 @@ class PlaneStock(_StockBase):
                 go(a, b, z, "kontur", t)
             go(bu[0], bv[0], z, "kontur", t)
 
-        def spiral(alw, z, ae, Rc, t, need_z):
+        def contour_finish(alw, z, t, Rc, aw_):
+            """Wand schlichten: senkrecht in die freigeräumte Nut, an die Wand heranfahren, eine Runde, zurück, raus."""
+            bnd = _trace_boundary(alw)
+            if len(bnd) <= 2:
+                return
+            B = bnd[::max(1, int(round(0.4 / self.g)))]
+            bu, bv = self.u[B[:, 0]], self.v[B[:, 1]]
+            free = alw & (self._wdist >= Rc + aw_ + 0.3)
+            if not free.any():
+                contour(alw, z, t)
+                return
+            # Startpunkt der Runde: der Punkt der Kontur, der einer freien Stelle am nächsten liegt
+            fu, fv = self.UU[free], self.VV[free]
+            best = None
+            for k in range(0, len(bu), max(1, len(bu) // 60)):
+                d2 = (fu - bu[k]) ** 2 + (fv - bv[k]) ** 2
+                j = int(np.argmin(d2))
+                if best is None or d2[j] < best[0]:
+                    best = (d2[j], k, fu[j], fv[j])
+            _, k0, pu, pv = best
+            bu, bv = np.roll(bu, -k0), np.roll(bv, -k0)
+            if pts:
+                go(pts[-1][0], pts[-1][1], z_safe, "luft", t)
+            go(pu, pv, z_safe, "luft", t)
+            go(pu, pv, z, "tauchen", t)                   # in der schon freigeräumten Nut – kein Material
+            go(bu[0], bv[0], z, "anfahren", t)
+            for a, b in zip(bu[1:], bv[1:]):
+                go(a, b, z, "kontur", t)
+            go(bu[0], bv[0], z, "kontur", t)
+            go(pu, pv, z, "abfahren", t)
+            go(pu, pv, z_safe, "luft", t)
+
+        def spiral(alw, z, ae, Rc, t, need_z, only_inner=False):
             """Konturparallel („Schnecke“): Ringe im Abstand ae, äußerer Ring = Kontur.
             strategy „schnecke“ = von außen nach innen, „schnecke_innen“ = von innen nach außen."""
             ae = min(ae, 1.8 * Rc)
@@ -4024,6 +4056,8 @@ class PlaneStock(_StockBase):
                             continue
                         B = bnd[::max(1, int(round(0.4 / g)))]
                         loops.append((self.u[B[:, 0]], self.v[B[:, 1]]))
+                if only_inner and loops:
+                    loops = loops[-1:]
                 if strategy == "schnecke_innen":
                     loops = loops[::-1]
                 first = True
@@ -4071,18 +4105,30 @@ class PlaneStock(_StockBase):
                                  f"Größter Fräser hier: ca. Ø{fmt(self.max_tool_d(), 1)}.")
             go(pts[-1][0], pts[-1][1], z_safe, "luft", 0)
             go(pts[-1][0], pts[-1][1], z_safe, "wechsel", 1)
-            state.update(Rc=R2, alw=alw2, z_prev=af)
+            # Boden: nur das Bodenaufmaß, mit Abstand Wandaufmaß zur Wand (die Wand kommt danach in einer Runde)
+            alw_f = self._allowed(R2 + aw) if aw > 0 else alw2
+            if not alw_f.any():
+                alw_f = alw2
+            state.update(Rc=R2, alw=alw_f, z_prev=af)
             if af > 1e-9:
-                if strategy == "zickzack":
-                    zigzag(alw2, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
+                # die Wandrunde nimmt den Boden bis 2×Radius von der Wand mit – Bodenbahn nur für die Mitte
+                reach = 2.0 * R2 - 0.3 * self.g
+                core = self.mask & (self._wdist > reach)
+                if core.any():
+                    alw_c = alw_f & _dilate(core, math.ceil(R2 / self.g) + 1)
+                    if not alw_c.any():
+                        alw_c = alw_f
+                    if strategy == "zickzack":
+                        zigzag(alw_c, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
+                    else:
+                        spiral(alw_c, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
                 else:
-                    spiral(alw2, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
+                    spiral(alw_f, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0, only_inner=True)
+            state["alw"] = alw2
             ap2 = finish.get("ap") or self.Hmax
             zs2 = levels(ap2, 0.0)
-            state["z_prev"] = self.Hmax
             for z in zs2:
-                contour(alw2, z, 1)
-                state["z_prev"] = z
+                contour_finish(alw2, z, 1, R2, aw)
             radii.append(R2)
             info["finish_layers"] = len(zs2)
         go(pts[-1][0], pts[-1][1], z_safe, "luft", pts[-1][4])

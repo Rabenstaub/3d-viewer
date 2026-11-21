@@ -45,6 +45,13 @@ for f in c.milling_features(m, w):
     if abs(rest.min() - 0.2) > 1e-6:
         fehler.append(f"{f['kind']}: Aufmaß Grund {rest.min():.3f} statt 0,2")
     pruefe(f"{f['kind']} +Schlichten", st, 99.5)
+    # Schlichten: Wand genau eine Runde, kein langes Eintauchen in die schon offene Nut
+    F = [p for p in st.path_pts if p[4] == 1]
+    runden = sum(1 for a_, b_ in zip(F[:-1], F[1:]) if b_[3] == "kontur" and a_[3] != "kontur")
+    rampe = sum(math.hypot(b_[0] - a_[0], b_[1] - a_[1]) for a_, b_ in zip(F[:-1], F[1:]) if b_[3] == "rampe")
+    print(f"   Schlichten: {runden} Wandrunde(n), Rampe {rampe:.1f} mm")
+    if runden != 1 or rampe > 0.2 / math.tan(math.radians(3.0)) + 1.0:
+        fehler.append(f"{f['kind']}: Schlichten {runden} Runden / Rampe {rampe:.1f} mm")
 # Eintauchen: pendelnd/Helix ohne senkrechtes Eintauchen, Winkel eingehalten
 for f in c.milling_features(m, w):
     st = c.PlaneStock(m, f, c.plane_floor_face(m, f))

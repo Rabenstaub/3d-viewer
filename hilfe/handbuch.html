@@ -245,6 +245,30 @@ innen <b>links</b> der Kontur (G41). Mit „Umlauf im Uhrzeigersinn (G42)“ wir
 Mittelpunkt (Z/Y) und G2/G3 – den Drehsinn bitte einmal mit der Ebenen-Festlegung deiner Steuerung (z. B. G19) abgleichen.</p>
 <p class="bild"><img src="bilder/fraesen.png" width="820"></p>
 
+<h3>Ringtasche in der Stirnseite → DIN-ISO-Unterprogramm (Wendel)</h3>
+<p>Für umlaufende Taschen in der Stirnfläche (ebener Grund, Außenwand – auch schräg –, innen eine Nabe) erzeugt der Viewer
+eine <b>Wendel-Fräsbahn</b>: C dreht, Z taucht gleichzeitig gleichmäßig ein, Schrägen werden über X mitgenommen. Ausgabe wie ein
+Mazak-EIA-Unterprogramm: <b>G01 mit inkrementellen U / W / H</b> (X als Ø, Z, C in Grad), am Ende <b>M99</b>. So lässt es sich
+in einen Mazatrol-Satz einfügen – auch ohne Option für gleichzeitige Achsbewegungen im Mazatrol-Teil.</p>
+<p class="bild"><img src="bilder/d_ringtasche.png" width="760"></p>
+<p><b>So geht's:</b> eine Fläche der Tasche anklicken → <b>Drehteil → Fräsen → „Ringtasche in der Stirnseite → DIN-ISO-Unterprogramm“</b>.
+Im Fenster Fräser-Ø, Zustellung je Umdrehung, Bahnabstand, Winkelschritt, Aufmaße, S und F eintragen → <b>Bahn berechnen + im Bild zeigen</b>
+(orange = Wendel, blau = Runde am Grund, grau = in der Luft) → <b>Als .EIA speichern</b>.</p>
+<p class="bild"><img src="bilder/ringtasche_dialog.png" width="560"></p>
+<table>
+<tr><th>Einstellung</th><th>Bedeutung</th></tr>
+<tr><td>Strategie „Wendel bis auf Grund“</td><td>je Bahn eine durchgehende Wendel von vor der Öffnung bis auf den Grund, dann eine Runde am Grund. Die Bahnen liegen anteilig zwischen Nabe und Außenwand – oben weiter, unten enger.</td></tr>
+<tr><td>Strategie „schichtweise“</td><td>je Zustellung eine Wendel-Umdrehung, dann auf dieser Tiefe alle Bahnen als Kreise.</td></tr>
+<tr><td>Start bei Ø</td><td>Bahn, mit der begonnen wird (z. B. Ø der Vorbohrung). Mit der Wendel ist Vorbohren meist nicht mehr nötig.</td></tr>
+<tr><td>W negativ</td><td>Z0 an der Stirn, Material im Minus (Mazak üblich). Ausschalten, wenn ins Material +Z gefahren wird.</td></tr>
+<tr><td>F je Satz umrechnen</td><td>Viele Steuerungen zählen bei C-Bewegungen die Grad wie Millimeter – dann stimmt die Geschwindigkeit am Fräser nicht. Mit der Option bekommt jeder Satz das passende F.</td></tr>
+<tr><td>Winkelschritt</td><td>Drehung je Satz. Kleiner = glatter, aber mehr Sätze (Speicher der Steuerung beachten). 2° ≈ 180 Sätze je Umdrehung.</td></tr>
+</table>
+<p>Das Programm ist <b>inkrementell</b> und endet wieder am Startpunkt (Summe U = 0, W = 0). Im Kopf steht als Kommentar der Startpunkt
+(X Ø, Z, C0). Zum Testen den Fräser einfach weiter vorne in der Luft ansetzen – die ganze Bahn läuft dann um diesen Abstand versetzt ab.</p>
+<div class="achtung">Nur die Fräsbahn – ohne Kollisionsprüfung mit Spannmittel und Werkzeughalter, ohne Schnittwert-Prüfung.
+Immer erst simulieren, dann in der Luft mit reduziertem Vorschub testen.</div>
+
 <a name="werkzeug"></a>
 <h2>15 Werkzeug: Welche Platte kommt hin?</h2>
 <p class="bild"><img src="bilder/d_werkzeug.png" width="820"></p>

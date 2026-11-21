@@ -2888,3 +2888,286 @@ def contour_gcode(rows, dialect="iso", x_radius=False, swap_arcs=False, name="Ko
                  "Ø": "D", "°": " Grad"}.items():
         txt = txt.replace(k, v)          # Steuerungen vertragen meist nur ASCII
     return txt
+
+
+# ---------------------------------------------------------------------------
+# Ringtasche in der Stirnseite: Profil aus dem Modell, Wendel-Fräsbahn, DIN-ISO (EIA) U/W/H
+# ---------------------------------------------------------------------------
+
+def _seg_poly(s, n_arc=24):
+    """Profil-Element als Punktfolge (a, r)."""
+    if s["kind"] == "ARC":
+        c = s["c"]
+        a0 = math.atan2(s["p0"][1] - c[1], s["p0"][0] - c[0])
+        a1 = math.atan2(s["p1"][1] - c[1], s["p1"][0] - c[0])
+        am = math.atan2(s["mid"][1] - c[1], s["mid"][0] - c[0])
+        da = (a1 - a0) % (2 * math.pi)
+        if (am - a0) % (2 * math.pi) > da:
+            da -= 2 * math.pi
+        return [np.array([c[0] + s["r"] * math.cos(a0 + t * da), c[1] + s["r"] * math.sin(a0 + t * da)])
+                for t in np.linspace(0, 1, n_arc + 1)]
+    return [np.asarray(s["p0"], float), np.asarray(s["p1"], float)]
+
+
+def ring_pockets(model):
+    """Alle umlaufenden Taschen in Stirnseiten: ebener Grund (senkrecht zur Achse), außen eine Wand mit
+    Material außen (konkav), innen eine Wand mit Material innen (Nabe, konvex) oder nichts.
+    Ergebnis: Liste von Profilen (dict) – siehe ring_pocket_profile."""
+    segs, _ = lathe_segments(model)
+    out = []
+    for i, s in enumerate(segs):
+        if s["kind"] != "PLANE":
+            continue
+        prof = _ring_profile_from_floor(segs, i)
+        if prof is not None:
+            out.append(prof)
+    return out
+
+
+def _ring_profile_from_floor(segs, i_floor, tol=2e-3):
+    fl = segs[i_floor]
+    a_f = float(fl["p0"][0])
+    r_lo_f, r_hi_f = sorted([float(fl["p0"][1]), float(fl["p1"][1])])
+
+    def at(pt, skip):
+        return [j for j, s in enumerate(segs) if j not in skip and
+                (np.linalg.norm(s["p0"] - pt) < tol or np.linalg.norm(s["p1"] - pt) < tol)]
+
+    def chain(pt, want_conc):
+        """Wand vom Grund aus verfolgen, bis eine Planfläche (Stirnfläche) erreicht ist."""
+        used, polys, faces = {i_floor}, [], []
+        top = None
+        while True:
+            nxt = at(pt, used)
+            if not nxt:
+                break
+            j = nxt[0]
+            s = segs[j]
+            if s["kind"] == "PLANE":
+                top = float(s["p0"][0])
+                break
+            if s["conc"] != want_conc:
+                return None
+            used.add(j)
+            faces.append(s["face"])
+            poly = _seg_poly(s)
+            if np.linalg.norm(poly[0] - pt) > tol:
+                poly = poly[::-1]
+            polys += poly
+            pt = poly[-1]
+        if not polys:
+            return None
+        return dict(pts=np.array(polys), faces=faces, top=top if top is not None else float(polys[-1][0]),
+                    end=np.array(pt))
+
+    p_hi = np.array([a_f, r_hi_f])
+    p_lo = np.array([a_f, r_lo_f])
+    outer = chain(p_hi, "1")
+    if outer is None:
+        return None
+    inner = chain(p_lo, "0") if r_lo_f > 1e-6 else None
+    if inner is None and r_lo_f > 1e-6:
+        return None                                    # Grund endet innen an keiner Nabe – keine Ringtasche
+    a_top = outer["top"]
+    s_dir = 1.0 if a_f > a_top else -1.0              # Richtung „ins Material“ entlang der Achse
+    if abs(a_f - a_top) < 1e-6:
+        return None
+    # Außenwand muss vom Grund zur Öffnung gehen (keine Hinterschneidung in Gegenrichtung)
+    return dict(floor_face=fl["face"], a_floor=a_f, a_top=a_top, s=s_dir, outer=outer["pts"], inner=None if inner is None else inner["pts"],
+                inner_top=None if inner is None else inner["top"], faces=[fl["face"]] + outer["faces"] + ([] if inner is None else inner["faces"]),
+                r_floor=(r_lo_f, r_hi_f))
+
+
+def _wall_r(pts, a, mode):
+    """Radius der Wand bei Lage a (lineare Interpolation; bei mehrdeutigen Stellen der engste Wert)."""
+    if pts is None:
+        return None
+    vals = []
+    for p, q in zip(pts[:-1], pts[1:]):
+        lo, hi = min(p[0], q[0]), max(p[0], q[0])
+        if lo - 1e-9 <= a <= hi + 1e-9:
+            if abs(q[0] - p[0]) < 1e-12:
+                vals += [p[1], q[1]]
+            else:
+                t = (a - p[0]) / (q[0] - p[0])
+                vals.append(p[1] + t * (q[1] - p[1]))
+    if not vals:
+        return None
+    return min(vals) if mode == "out" else max(vals)
+
+
+def ring_pocket_limits(prof, a, Rt, aw):
+    """Erlaubter Bereich der Fräsermitte (Radius) bei Spitzenlage a: Fräser (zylindrisch, Radius Rt)
+    reicht von a bis über die Öffnung – über diese ganze Höhe darf er die Wände nicht verletzen."""
+    s = prof["s"]
+    span = np.linspace(prof["a_top"], a, 25) if (a - prof["a_top"]) * s > 0 else np.array([a])
+    ro = [_wall_r(prof["outer"], x, "out") for x in span]
+    ro = [v for v in ro if v is not None]
+    ri = [_wall_r(prof["inner"], x, "in") for x in span] if prof["inner"] is not None else []
+    ri = [v for v in ri if v is not None]
+    rhi = (min(ro) if ro else 1e9) - Rt - aw
+    rlo = (max(ri) if ri else 0.0) + Rt + aw
+    return rlo, rhi
+
+
+def ring_pocket_path(prof, Rt, ap, ae, step_deg=2.0, aw=0.0, af=0.0, safety=2.0, strategy="wendel",
+                     r_start=None, c_dir=1.0):
+    """Fräsbahn als Punktfolge (a, r, c°): wendelförmiges Eintauchen, C dreht, ohne senkrechtes Einstechen.
+    strategy „wendel“: je Bahn eine durchgehende Wendel bis auf den Grund + eine Runde am Grund;
+                      Bahnen verlaufen anteilig zwischen Innen- und Außengrenze (Schrägen werden mitgenommen).
+    strategy „schicht“: je Umdrehung eine Zustellung (Wendel), dann auf dieser Tiefe alle Bahnen als Kreise.
+    Ergebnis: dict(points=[(a, r, c, art)], info=…) – art: „luft“, „wendel“, „kreis“, „quer“."""
+    s = prof["s"]
+    a_top = prof["a_top"]
+    a_end = prof["a_floor"] - s * af
+    a_start = a_top - s * safety
+    depth = (a_end - a_top) * s
+    if depth <= 0:
+        raise ValueError("Tasche ist nicht tiefer als das Aufmaß.")
+    lim_f = ring_pocket_limits(prof, a_end, Rt, aw)
+    if lim_f[1] < lim_f[0] - 1e-9:
+        raise ValueError(f"Fräser Ø{fmt(2 * Rt)} passt am Grund nicht in die Tasche "
+                         f"(Platz für Fräsermitte von r {fmt(lim_f[0])} bis r {fmt(lim_f[1])}).")
+    # Grenzen über die Tiefe (für Prüfung und anteilige Bahnen)
+    levels_all = np.linspace(a_top, a_end, 60)
+    lims = [ring_pocket_limits(prof, x, Rt, aw) for x in levels_all]
+    widest = max(hi - lo for lo, hi in lims)
+    n_tr = max(1, int(math.ceil(widest / max(ae, 1e-3) - 1e-9))) + 1 if widest > 1e-6 else 1
+    ts = np.linspace(0.0, 1.0, n_tr) if n_tr > 1 else np.array([0.5])
+    if r_start is not None and n_tr > 1:
+        t0 = (r_start - lim_f[0]) / max(lim_f[1] - lim_f[0], 1e-9)
+        k0 = int(np.argmin(np.abs(ts - t0)))
+    else:
+        k0 = 0
+    order = [k0] + list(range(k0 + 1, n_tr)) + list(range(k0 - 1, -1, -1))
+
+    def r_of(t, a):
+        lo, hi = ring_pocket_limits(prof, a, Rt, aw)
+        if hi < lo:
+            return 0.5 * (lo + hi)
+        return lo + t * (hi - lo)
+
+    pts = []
+    c = 0.0
+
+    def emit(a, r, kind):
+        pts.append((float(a), float(r), float(c), kind))
+
+    def helix(t, a0, a1):
+        nonlocal c
+        nrev = max(1, int(math.ceil(abs(a1 - a0) / ap - 1e-9)))
+        nstep = max(1, int(math.ceil(360.0 * nrev / step_deg)))
+        for k in range(1, nstep + 1):
+            f = k / nstep
+            a = a0 + f * (a1 - a0)
+            c += c_dir * 360.0 * nrev / nstep
+            emit(a, r_of(t, a) if a * s >= a_top * s else r_of(t, a_top), "wendel")
+
+    def circle(t, a):
+        nonlocal c
+        nstep = max(1, int(math.ceil(360.0 / step_deg)))
+        r = r_of(t, a)
+        for k in range(1, nstep + 1):
+            c += c_dir * 360.0 / nstep
+            emit(a, r, "kreis")
+
+    first = order[0]
+    emit(a_start, r_of(ts[first], a_top), "start")
+    if strategy == "wendel":
+        for n, k in enumerate(order):
+            t = ts[k]
+            if n > 0:
+                emit(a_start, pts[-1][1], "luft")                     # zurück über die Öffnung
+                emit(a_start, r_of(t, a_top), "luft")               # quer zur nächsten Bahn
+            helix(t, a_start, a_end)
+            circle(t, a_end)
+        emit(a_start, pts[-1][1], "luft")
+        emit(a_start, pts[0][1], "luft")                              # zurück auf den Startradius
+    else:
+        nlev = max(1, int(math.ceil((depth + safety) / ap - 1e-9)))
+        a_prev = a_start
+        for i in range(1, nlev + 1):
+            a_k = a_start + s * min(i * ap, depth + safety)
+            if (a_k - a_top) * s < 0:
+                continue
+            emit(a_prev, r_of(ts[first], max(a_prev, a_top) if s > 0 else min(a_prev, a_top)), "quer")
+            helix(ts[first], a_prev, a_k)
+            circle(ts[first], a_k)
+            for k in order[1:]:
+                emit(a_k, r_of(ts[k], a_k), "quer")
+                circle(ts[k], a_k)
+            a_prev = a_k
+        emit(a_start, pts[-1][1], "luft")
+        emit(a_start, pts[0][1], "luft")
+    # Prüfung: keine Bahn verletzt die Wände
+    worst = 0.0
+    for a, r, _, kind in pts:
+        if (a - a_top) * s <= 0:
+            continue
+        lo, hi = ring_pocket_limits(prof, a, Rt, 0.0)
+        worst = max(worst, lo - r, r - hi)
+    info = dict(tracks=n_tr, blocks=len(pts) - 1, r_floor=lim_f, worst=worst, a_start=a_start, a_end=a_end)
+    return dict(points=pts, info=info)
+
+
+def ring_pocket_eia(model, wcs, prof, path, F=100.0, S=1500, decimals=4, w_neg=True, u_diameter=True,
+                    f_comp=False, name="RINGTASCHE", Rt=None, params_text=""):
+    """DIN-ISO-Unterprogramm (Mazak EIA) wie bei Wendelnuten: G01 mit inkrementellen U (X), W (Z), H (C).
+    Rundungsfehler werden mitgeführt, die Summen gehen genau auf."""
+    mo, md = main_axis(model)
+    zs = float(np.sign(wcs.dir_to_wcs(md)[2]) or 1.0)
+    pts = path["points"]
+
+    def Zw(a):
+        return float(wcs.to_wcs(mo + a * md)[2])
+    a0, r0, c0, _ = pts[0]
+    q = 10.0 ** decimals
+    acc = np.zeros(3)                  # bereits ausgegeben (gerundet)
+    exact = np.zeros(3)
+    lines = [f"({name} - INKREMENTELL U/W/H, NUR BAHN OHNE TECHNOLOGIEPRUEFUNG)",
+             f"(STARTPUNKT: X{2 * r0:.3f} Z{Zw(a0) * (-1 if w_neg else 1) * zs:.3f} C0 - DORT POSITIONIEREN)",
+             "(ZUM TESTEN: STARTPUNKT IN DER LUFT VOR DER STIRNSEITE ANSETZEN)"]
+    if params_text:
+        lines.append(f"({params_text})")
+    lines += [f"S{int(S)}", f"F{fmt(F, 3).replace(',', '.')}", "G01"]
+    lastF = F
+    L_real = 0.0
+    for (a, r, c, kind), (pa, pr, pc, _) in zip(pts[1:], pts[:-1]):
+        du = (r - pr) * (2 if u_diameter else 1)
+        dw = (Zw(a) - Zw(pa)) * (-1.0 if w_neg else 1.0) * zs
+        dh = c - pc
+        exact += (du, dw, dh)
+        out = np.round(exact * q) / q - acc
+        acc += out
+        seg = math.sqrt((r - pr) ** 2 + (a - pa) ** 2 + ((r + pr) / 2 * math.radians(dh)) ** 2)
+        L_real += seg
+        if np.all(np.abs(out) < 0.5 / q):
+            continue                                   # Satz ohne Bewegung weglassen
+        parts = []
+        if abs(out[0]) > 0.5 / q:
+            parts.append(f"U{out[0]:.{decimals}f}")
+        parts.append(f"W{out[1]:.{decimals}f}")
+        parts.append(f"H{out[2]:.{decimals}f}")
+        if f_comp and seg > 1e-9:
+            L_cmd = math.sqrt(out[0] ** 2 + out[1] ** 2 + out[2] ** 2)
+            fb = F * L_cmd / seg
+            if abs(fb - lastF) > 0.01 * F:
+                parts.append(f"F{fb:.1f}")
+                lastF = fb
+        lines.append(" ".join(p.replace("-0.", "-0.") for p in parts))
+    lines.append("M99")
+    tot = acc
+    info = dict(blocks=len(lines) - 6, U=tot[0], W=tot[1], H=tot[2], length=L_real,
+                minutes=L_real / F if F > 0 else 0.0)
+    return "\r\n".join(lines) + "\r\n", info
+
+
+def ring_path_3d(model, wcs, path):
+    """Bahn als 3D-Punkte (für die Vorschau)."""
+    mo, md = main_axis(model)
+    e1, e2 = angle_frame(md, wcs)
+    out = []
+    for a, r, c, _ in path["points"]:
+        cr = math.radians(c)
+        out.append(mo + a * md + r * (math.cos(cr) * e1 + math.sin(cr) * e2))
+    return np.array(out)

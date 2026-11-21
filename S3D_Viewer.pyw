@@ -87,7 +87,7 @@ from s3d_core import fmt
 
 APP_NAME = "3D Viewer"
 APP_URL = "https://github.com/Rabenstaub"
-APP_VERSION = "3.3.2"
+APP_VERSION = "3.4.0"
 
 # Beidseitige Beleuchtung: Kopflicht + Führungslicht + leichter Glanz
 _sh.Shaders.append(_sh.ShaderProgram("s3d_shaded", [
@@ -868,6 +868,175 @@ class ColorButton(QtWidgets.QPushButton):
 
     def value(self):
         return self.color.name(QtGui.QColor.NameFormat.HexArgb if self.alpha else QtGui.QColor.NameFormat.HexRgb)
+
+
+class RingPocketDialog(QtWidgets.QDialog):
+    """Ringtasche in der Stirnseite: Wendel-Fräsbahn als DIN-ISO-Unterprogramm (inkrementell U/W/H)."""
+
+    FIELDS = [("D", "Fräser-Ø", 6.0, 0.5, 100.0, 3), ("ap", "Zustellung je Umdrehung (Wendel-Steigung)", 1.0, 0.01, 50.0, 3),
+              ("ae", "Bahnabstand radial", 3.6, 0.05, 100.0, 3), ("step", "Winkelschritt je Satz (°)", 2.0, 0.1, 45.0, 2),
+              ("aw", "Aufmaß Wand", 0.0, 0.0, 10.0, 3), ("af", "Aufmaß Grund", 0.0, 0.0, 10.0, 3),
+              ("safety", "Sicherheitsabstand vor der Öffnung", 2.0, 0.0, 50.0, 2),
+              ("start", "Start bei Ø (Vorbohrung)", 0.0, 0.0, 2000.0, 3),
+              ("S", "Drehzahl S", 3000, 1, 60000, 0), ("F", "Vorschub F (mm/min)", 200.0, 1.0, 20000.0, 1)]
+
+    def __init__(self, win, prof):
+        super().__init__(win)
+        self.win, self.prof = win, prof
+        self.setWindowTitle("Ringtasche → DIN-ISO-Unterprogramm")
+        self.setModal(False)
+        self.resize(560, 720)
+        lay = QtWidgets.QVBoxLayout(self)
+        m, w = win.model, win.wcs
+        mo, md = core.main_axis(m)
+        Z = lambda a: float(w.to_wcs(mo + a * md)[2])
+        rlo_f, rhi_f = prof["r_floor"]
+        ro_top = core._wall_r(prof["outer"], prof["a_top"], "out")
+        ri_top = core._wall_r(prof["inner"], prof["a_top"], "in") if prof["inner"] is not None else None
+        info = QtWidgets.QLabel(
+            f"<b>Tasche:</b> Öffnung bei Z {fmt(Z(prof['a_top']))}, Grund bei Z {fmt(Z(prof['a_floor']))} "
+            f"(Tiefe {fmt(abs(prof['a_floor'] - prof['a_top']))})<br>"
+            f"Am Grund zwischen Ø{fmt(2 * rlo_f)} und Ø{fmt(2 * rhi_f)} · an der Öffnung außen Ø{fmt(2 * ro_top)}"
+            + (f", Nabe Ø{fmt(2 * ri_top)}" if ri_top else "") +
+            "<br><span style='color:#6b7890'>Bahn für einen Schaftfräser in Achsrichtung. C dreht, Z taucht gleichzeitig "
+            "ein (Wendel), Schrägen werden über X mitgenommen.</span>")
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        form = QtWidgets.QFormLayout()
+        self.sp = {}
+        for key, lab, val, lo, hi, dec in self.FIELDS:
+            sb = QtWidgets.QDoubleSpinBox() if dec else QtWidgets.QSpinBox()
+            sb.setRange(lo, hi)
+            if dec:
+                sb.setDecimals(dec)
+            v = win.settings.value(f"ring_{key}", None)
+            try:
+                v = float(v) if v is not None else val
+            except (TypeError, ValueError):
+                v = val
+            sb.setValue(int(v) if not dec else v)
+            if key == "start":
+                sb.setSpecialValueText("innerste Bahn")
+            form.addRow(lab, sb)
+            self.sp[key] = sb
+        self.strategy = QtWidgets.QComboBox()
+        self.strategy.addItem("Je Bahn eine Wendel bis auf Grund, dann Runde am Grund", "wendel")
+        self.strategy.addItem("Schichtweise: Wendel je Zustellung, dann alle Bahnen auf dieser Tiefe", "schicht")
+        form.addRow("Strategie", self.strategy)
+        self.cdir = QtWidgets.QComboBox()
+        self.cdir.addItems(["C dreht positiv (H+)", "C dreht negativ (H−)"])
+        form.addRow("Drehrichtung C", self.cdir)
+        self.wneg = QtWidgets.QCheckBox("Z ins Material = W negativ (Z0 an der Stirn, wie bei Mazak)")
+        self.wneg.setChecked(True)
+        form.addRow("", self.wneg)
+        self.udia = QtWidgets.QCheckBox("U als Durchmesser-Wert")
+        self.udia.setChecked(True)
+        form.addRow("", self.udia)
+        self.fcomp = QtWidgets.QCheckBox("F je Satz umrechnen (Steuerung zählt Grad wie mm)")
+        self.fcomp.setToolTip("Wenn die Steuerung bei C-Bewegungen die Grad wie Millimeter rechnet, stimmt sonst die "
+                              "Geschwindigkeit am Fräser nicht. Mit dieser Option bekommt jeder Satz das passende F.")
+        form.addRow("", self.fcomp)
+        self.dec = QtWidgets.QSpinBox()
+        self.dec.setRange(3, 6)
+        self.dec.setValue(4)
+        form.addRow("Nachkommastellen", self.dec)
+        self.prog = QtWidgets.QLineEdit("3625")
+        form.addRow("Programmnummer / Dateiname", self.prog)
+        lay.addLayout(form)
+        self.summary = QtWidgets.QLabel("")
+        self.summary.setWordWrap(True)
+        lay.addWidget(self.summary)
+        bl = QtWidgets.QHBoxLayout()
+        b1 = QtWidgets.QPushButton("Bahn berechnen + im Bild zeigen")
+        b1.clicked.connect(self.preview)
+        b2 = QtWidgets.QPushButton("Als .EIA speichern …")
+        b2.clicked.connect(self.save)
+        b3 = QtWidgets.QPushButton("Schließen")
+        b3.clicked.connect(self.close)
+        for b in (b1, b2, b3):
+            bl.addWidget(b)
+        lay.addLayout(bl)
+        warn = QtWidgets.QLabel("Nur die Bahn – ohne Kollisionsprüfung mit Spannmittel oder Werkzeughalter. "
+                                "Erst simulieren, dann in der Luft mit reduziertem Vorschub testen.")
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color:#b05a00")
+        lay.addWidget(warn)
+        self.path = None
+        self.items = []
+
+    def _vals(self):
+        v = {k: float(sb.value()) for k, sb in self.sp.items()}
+        for k, sb in self.sp.items():
+            self.win.settings.setValue(f"ring_{k}", v[k])
+        return v
+
+    def compute(self):
+        v = self._vals()
+        try:
+            path = core.ring_pocket_path(
+                self.prof, v["D"] / 2, v["ap"], v["ae"], v["step"], v["aw"], v["af"], v["safety"],
+                self.strategy.currentData(), r_start=(v["start"] / 2 if v["start"] > 0 else None),
+                c_dir=1.0 if self.cdir.currentIndex() == 0 else -1.0)
+        except ValueError as ex:
+            QtWidgets.QMessageBox.warning(self, APP_NAME, str(ex))
+            return None
+        txt, inf = core.ring_pocket_eia(
+            self.win.model, self.win.wcs, self.prof, path, F=v["F"], S=v["S"], decimals=self.dec.value(),
+            w_neg=self.wneg.isChecked(), u_diameter=self.udia.isChecked(), f_comp=self.fcomp.isChecked(),
+            name=f"O{self.prog.text().strip()} RINGTASCHE",
+            params_text=(f"FRAESER D{v['D']:g} AP{v['ap']:g} AE{v['ae']:g} SCHRITT{v['step']:g} GRAD "
+                         f"AUFMASS W{v['aw']:g} G{v['af']:g} {self.strategy.currentData().upper()}"))
+        pi = path["info"]
+        ok = "Wände werden nicht verletzt ✓" if pi["worst"] < 1e-6 else f"ACHTUNG: Wand um {fmt(pi['worst'])} verletzt"
+        self.summary.setText(
+            f"<b>{pi['tracks']} Bahnen · {inf['blocks']} Sätze · Weg {fmt(inf['length'] / 1000, 2)} m · "
+            f"ca. {fmt(inf['minutes'], 1)} min bei F{v['F']:g}</b><br>"
+            f"Fräsermitte am Grund: Ø{fmt(2 * pi['r_floor'][0])} … Ø{fmt(2 * pi['r_floor'][1])} · {ok}<br>"
+            f"Summe U {fmt(inf['U'])} · W {fmt(inf['W'])} · H {fmt(inf['H'])}° "
+            f"(Programm endet wieder am Startpunkt, C {fmt(inf['H'] / 360, 1)} Umdrehungen weiter)")
+        self.path, self.txt = path, txt
+        return path
+
+    def preview(self):
+        path = self.compute()
+        if path is None:
+            return
+        self.clear_preview()
+        P = core.ring_path_3d(self.win.model, self.win.wcs, path)
+        col = {"start": (0.2, 0.2, 0.2, 1), "luft": (0.45, 0.45, 0.45, 1), "quer": (0.1, 0.6, 0.2, 1),
+               "wendel": (0.95, 0.5, 0.0, 1), "kreis": (0.15, 0.4, 0.85, 1)}
+        C = np.array([col.get(k, (0.9, 0.1, 0.1, 1)) for *_, k in path["points"]], float)
+        it = gl.GLLinePlotItem(pos=P, color=C, width=1.6, antialias=True, mode="line_strip", glOptions=GL_ONTOP)
+        it.setDepthValue(20)
+        self.win.view.addItem(it)
+        self.items = [it]
+        self.win.status.showMessage("Fräsbahn im Bild: orange = Wendel, blau = Runde, grün = quer, grau = in der Luft")
+
+    def clear_preview(self):
+        for it in self.items:
+            try:
+                self.win.view.removeItem(it)
+            except Exception:
+                pass
+        self.items = []
+
+    def save(self):
+        if self.compute() is None:
+            return
+        d = self.win.settings.value("eia_dir", "") or os.path.dirname(getattr(self.win, "model_path", "") or "")
+        fn, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Unterprogramm speichern",
+                                                      os.path.join(d, f"{self.prog.text().strip() or 'RING'}.EIA"),
+                                                      "Mazak EIA (*.EIA);;NC-Programm (*.nc *.txt);;Alle Dateien (*)")
+        if not fn:
+            return
+        self.win.settings.setValue("eia_dir", os.path.dirname(fn))
+        with open(fn, "w", encoding="ascii", errors="replace", newline="") as fh:
+            fh.write(self.txt)
+        self.win.status.showMessage(f"Gespeichert: {fn}")
+
+    def closeEvent(self, ev):
+        self.clear_preview()
+        super().closeEvent(ev)
 
 
 class SnipOverlay(QtWidgets.QWidget):
@@ -4621,6 +4790,38 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             return []
 
+    def open_ring_pocket(self):
+        """Ringtasche wählen (aus der Auswahl oder die einzige im Teil) und den Dialog öffnen."""
+        if self.model is None:
+            return
+        try:
+            profs = core.ring_pockets(self.model)
+        except Exception as ex:
+            QtWidgets.QMessageBox.warning(self, APP_NAME, f"Taschen konnten nicht gelesen werden:\n{ex}")
+            return
+        if not profs:
+            QtWidgets.QMessageBox.information(self, APP_NAME, "In diesem Teil wurde keine umlaufende Tasche in einer "
+                                              "Stirnseite gefunden (ebener Grund mit Außenwand und Nabe).")
+            return
+        sel = {e.ref for e in self.sel if e.kind == "face"}
+        cand = [p for p in profs if sel & set(p["faces"])] or (profs if len(profs) == 1 else [])
+        if not cand:
+            QtWidgets.QMessageBox.information(self, APP_NAME, f"Es gibt {len(profs)} Stirntaschen – bitte eine Fläche "
+                                              "der gewünschten Tasche (Grund oder Wand) anklicken und nochmal öffnen.")
+            return
+        prof = cand[0]
+        self.sel = [core.Entity(self.model, "face", f) for f in prof["faces"]]
+        self._keep_tab = True
+        try:
+            self._refresh_selection()
+        finally:
+            self._keep_tab = False
+        dlg = getattr(self, "_ring_dlg", None)
+        if dlg is not None:
+            dlg.close()
+        self._ring_dlg = RingPocketDialog(self, prof)
+        self._ring_dlg.show()
+
     def _pocket_at(self, p, tol=1e-4):
         for q, k, i in getattr(self, "pocket_pts", []):
             if np.linalg.norm(q - np.asarray(p, float)) < tol:
@@ -5397,6 +5598,11 @@ class MainWindow(QtWidgets.QMainWindow):
         l5.addWidget(self.pocket_info)
         b = QtWidgets.QPushButton("Kontur als CSV speichern …")
         b.clicked.connect(lambda: self._export_table(self.pocket_table, "_Nutkontur.csv", "Nut-Kontur speichern"))
+        l5.addWidget(b)
+        b = QtWidgets.QPushButton("Ringtasche in der Stirnseite → DIN-ISO-Unterprogramm (Wendel) …")
+        b.setToolTip("Umlaufende Tasche in der Stirnfläche (Grund, Außenwand, Nabe) als Wendel-Fräsbahn: "
+                     "C dreht, Z taucht gleichzeitig ein – inkrementell U/W/H wie ein Mazak-EIA-Unterprogramm")
+        b.clicked.connect(self.open_ring_pocket)
         l5.addWidget(b)
         tabs.addTab(w5, "Fräsen")
         self._groove_rows, self._tool_rows, self._mill_rows = [], [], []

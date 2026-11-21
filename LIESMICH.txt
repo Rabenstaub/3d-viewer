@@ -5,6 +5,13 @@ Dateien:   S3D_Viewer.pyw (Programm) + s3d_core.py (Geometrie-Kern) – beide im
 Starten:   S3D_Viewer.pyw doppelklicken (fehlende Pakete werden angeboten)
 EXE bauen: build.bat
 
+Neu in 3.4.0
+------------
+  Ringtasche in der Stirnseite → DIN-ISO-Unterprogramm: Wendel-Fräsbahn (C dreht, Z taucht
+  gleichzeitig ein, Schrägen über X), Ausgabe G01 mit inkrementellen U/W/H und M99 wie ein
+  Mazak-EIA-Unterprogramm. Drehteil → Fräsen → „Ringtasche …“. Vorschau der Bahn im Bild,
+  Prüfung gegen die Wände, F-Umrechnung je Satz wählbar. Neues Demo-Teil demo\Demo_Stirntasche.s3d.
+
 Neu in 3.3.2
 ------------
   Nullpunkt: Knopf „Alle Nullpunkt-Werte zurücksetzen“. Kasten-Beschriftung folgt dem Nullpunkt

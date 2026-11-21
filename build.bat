@@ -28,6 +28,7 @@ echo === EXE bauen ===
 echo === Demo-Datei dazulegen ===
 if exist "demo\Demo_Welle.s3d" copy /y "demo\Demo_Welle.s3d" "dist\Demo_Welle.s3d" >nul
 if exist "demo\Demo_Indexbolzen.s3d" copy /y "demo\Demo_Indexbolzen.s3d" "dist\Demo_Indexbolzen.s3d" >nul
+if exist "demo\Demo_Stirntasche.s3d" copy /y "demo\Demo_Stirntasche.s3d" "dist\Demo_Stirntasche.s3d" >nul
 
 echo === Signieren (Certum SimplySign) ===
 set SIGNTOOL=

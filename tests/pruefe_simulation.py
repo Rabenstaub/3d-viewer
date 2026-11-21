@@ -45,5 +45,26 @@ for f in c.milling_features(m, w):
     if abs(rest.min() - 0.2) > 1e-6:
         fehler.append(f"{f['kind']}: Aufmaß Grund {rest.min():.3f} statt 0,2")
     pruefe(f"{f['kind']} +Schlichten", st, 99.5)
+# Zu großer Fräser: klare Meldung mit größtem möglichen Ø
+st = c.PlaneStock(m, c.milling_features(m, w)[0], c.plane_floor_face(m, c.milling_features(m, w)[0]))
+try:
+    st.plan(6.5, 1.0, 5.0)
+    fehler.append("Ø13 in 12er-Nut ohne Meldung")
+except ValueError as ex:
+    print("Meldung:", ex)
+    if "Größter Fräser" not in str(ex):
+        fehler.append("Meldung ohne größten Fräser")
+# Rechtecktasche mit scharfen Ecken: Fräser Ø6 lässt Ecken stehen -> Warnung
+uc, vc = st.UU[st.mask].mean(), st.VV[st.mask].mean()
+rect = (np.abs(st.UU - uc) <= 10) & (np.abs(st.VV - vc) <= 5)
+st.wall = ~rect & (np.abs(st.UU - uc) <= 12) & (np.abs(st.VV - vc) <= 7)
+st.mask = rect
+st.top0 = np.where(rect, 1.0, 0.0)
+st.Hmax = 1.0
+del st._wdist
+inf = st.plan(3.0, 1.0, 3.6)
+print(f"Rechteck Ø6: Rest {inf['rest_area']:.1f} mm² (Ecken)")
+if inf["rest_area"] < 1.0:
+    fehler.append("Ecken-Rest nicht erkannt")
 print("Abweichungen:", len(fehler), *fehler)
 sys.exit(1 if fehler else 0)

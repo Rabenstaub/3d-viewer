@@ -3739,7 +3739,8 @@ class PlaneStock(_StockBase):
         finish=dict(Rt=…, ap=…, ae=…): Schlichten mit 2. Fräser – erst Grund (Zickzack), dann Wand (Kontur)."""
         allowed = self._allowed(Rt + aw)
         if not allowed.any():
-            raise ValueError(f"Fräser Ø{fmt(2 * Rt)} mit Aufmaß {fmt(aw)} passt nicht in dieses Merkmal.")
+            raise ValueError(f"Fräser Ø{fmt(2 * Rt)}{' mit Aufmaß ' + fmt(aw) if aw else ''} passt nicht in dieses "
+                             f"Merkmal. Größter Fräser hier: ca. Ø{fmt(self.max_tool_d(aw), 1)}.")
         if af >= self.Hmax:
             raise ValueError("Aufmaß am Grund ist größer als die Tiefe.")
         z_safe = self.Hmax + safety
@@ -3814,7 +3815,8 @@ class PlaneStock(_StockBase):
             R2 = finish["Rt"]
             alw2 = self._allowed(R2)
             if not alw2.any():
-                raise ValueError(f"Schlichtfräser Ø{fmt(2 * R2)} passt nicht in dieses Merkmal.")
+                raise ValueError(f"Schlichtfräser Ø{fmt(2 * R2)} passt nicht in dieses Merkmal. "
+                                 f"Größter Fräser hier: ca. Ø{fmt(self.max_tool_d(), 1)}.")
             go(pts[-1][0], pts[-1][1], z_safe, "luft", 0)
             go(pts[-1][0], pts[-1][1], z_safe, "wechsel", 1)
             if af > 1e-9:
@@ -3839,7 +3841,26 @@ class PlaneStock(_StockBase):
         self.reset()
         Lp = float(np.linalg.norm(np.diff(P3, axis=0), axis=1).sum())
         info.update(blocks=len(pts), length=Lp, depth=self.Hmax)
+        # Probelauf: was bleibt ungewollt stehen (ohne das absichtliche Aufmaß)?
+        self.cut_to(len(self.poses) - 1)
+        z_ok = (0.0 if finish else af) + 0.02
+        w_ok = 0.0 if finish else aw
+        bad = self.mask & (self.top > z_ok) & (self._wdist > w_ok + 1.5 * self.g)
+        info["rest_area"] = float(bad.sum() * self.g ** 2)
+        info["rest_pct"] = 100.0 * bad.sum() / max(self.mask.sum(), 1)
+        info["rest_where"] = None
+        if bad.any():
+            info["rest_where"] = self.to3d(float(self.UU[bad].mean()), float(self.VV[bad].mean()), 0.0)
+        self.rest_mask = bad
+        self.reset()
         return info
+
+    def max_tool_d(self, aw=0.0):
+        """Größter Fräser-Ø, der irgendwo im Merkmal Platz hat."""
+        self._allowed(0.0)
+        d = self._wdist[self.mask]
+        d = d[np.isfinite(d)]
+        return math.floor(20 * (d.max() - aw - 0.5 * self.g)) / 10.0 if len(d) else float("inf")
 
     def _cut(self, j):
         u, v, z = self.poses[j, 3:6]

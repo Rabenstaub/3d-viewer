@@ -1321,6 +1321,11 @@ class SimDialog(QtWidgets.QDialog):
                           + (f" · Schlichten Ø{fmt(v['D2'])}: Grund + Wand in {inf['finish_layers']} "
                              f"{'Schicht' if inf['finish_layers'] == 1 else 'Schichten'}" if fin else "")
                           + f"<br>{inf['blocks']} Sätze · Weg {fmt(inf['length'])} mm · Tiefe {fmt(inf['depth'])} mm")
+        if inf["rest_area"] > 4 * self.stock.g ** 2 and inf["rest_pct"] > 0.05:
+            self.plan_info += (f"<br><span style='color:#b00020'><b>Achtung:</b> ca. {fmt(inf['rest_area'], 1)} mm² "
+                               f"({fmt(inf['rest_pct'], 1)} %) Material bleibt stehen – der Fräser kommt nicht überall "
+                               f"hin (Ecken oder Engstellen kleiner als der Fräser). Kleineren Fräser wählen; "
+                               f"mit ⏭ Ende sieht man die Stellen.</span>")
         self._build()
 
     def _clear(self):

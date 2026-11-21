@@ -3718,55 +3718,59 @@ class PlaneStock(_StockBase):
     def to3d(self, u, v, z):
         return self.mo + u * self.md + v * self.vdir + (self.h + z) * self.n
 
-    def plan(self, Rt, ap, ae, safety=2.0):
-        """Bahn erzeugen (Fräsermitte u, v, Höhe z über Grund). Liefert info dict."""
-        self.Rt = Rt
-        wb = self.wall & ~np.all([np.roll(self.wall, s, ax) for ax in (0, 1) for s in (1, -1)], axis=0)
-        W = np.column_stack([self.UU[wb], self.VV[wb]])
-        cand = self.mask.copy()
-        dist = np.full(self.UU.shape, np.inf)
-        if len(W):
-            q = np.column_stack([self.UU[cand], self.VV[cand]])
-            dd = np.empty(len(q))
-            for k in range(0, len(q), 4000):
-                dd[k:k + 4000] = np.sqrt(((q[k:k + 4000, None, :] - W[None, :, :]) ** 2).sum(-1)).min(1)
-            dist[cand] = dd
-        allowed = cand & (dist >= Rt - 0.5 * self.g)
+    def _allowed(self, Rc):
+        """Zellen, auf denen die Fräsermitte stehen darf (Abstand zu Wänden ≥ Rc)."""
+        if not hasattr(self, "_wdist"):
+            wb = self.wall & ~np.all([np.roll(self.wall, s, ax) for ax in (0, 1) for s in (1, -1)], axis=0)
+            W = np.column_stack([self.UU[wb], self.VV[wb]])
+            dist = np.full(self.UU.shape, np.inf)
+            if len(W):
+                q = np.column_stack([self.UU[self.mask], self.VV[self.mask]])
+                dd = np.empty(len(q))
+                for k in range(0, len(q), 4000):
+                    dd[k:k + 4000] = np.sqrt(((q[k:k + 4000, None, :] - W[None, :, :]) ** 2).sum(-1)).min(1)
+                dist[self.mask] = dd
+            self._wdist = dist
+        return self.mask & (self._wdist >= Rc - 0.5 * self.g)
+
+    def plan(self, Rt, ap, ae, safety=2.0, aw=0.0, af=0.0, finish=None):
+        """Bahn erzeugen (Fräsermitte u, v, Höhe z über Grund, Werkzeug-Nr.).
+        Schruppen mit Fräser Rt, Aufmaß aw an den Wänden und af am Grund; optional
+        finish=dict(Rt=…, ap=…, ae=…): Schlichten mit 2. Fräser – erst Grund (Zickzack), dann Wand (Kontur)."""
+        allowed = self._allowed(Rt + aw)
         if not allowed.any():
-            raise ValueError(f"Fräser Ø{fmt(2 * Rt)} passt nicht in dieses Merkmal.")
-        zs = []
-        z = self.Hmax
-        while z > 1e-6:
-            z = max(z - ap, 0.0)
-            zs.append(z)
-        if not zs:
-            zs = [0.0]
+            raise ValueError(f"Fräser Ø{fmt(2 * Rt)} mit Aufmaß {fmt(aw)} passt nicht in dieses Merkmal.")
+        if af >= self.Hmax:
+            raise ValueError("Aufmaß am Grund ist größer als die Tiefe.")
         z_safe = self.Hmax + safety
         pts = []
 
-        def go(u, v, z, kind):
-            pts.append((u, v, z, kind))
-        ae = min(ae, 1.8 * Rt)                       # Bahnabstand nie größer als der Fräser
-        jv = np.nonzero(allowed.any(0))[0]
-        v_lo, v_hi = self.v[jv[0]], self.v[jv[-1]]
-        nrow = max(1, int(math.ceil((v_hi - v_lo) / ae - 1e-9)) + 1)
-        vs = np.linspace(v_lo, v_hi, nrow) if nrow > 1 else np.array([0.5 * (v_lo + v_hi)])
-        rows = []
-        for vv in vs:                                  # nächste Rasterzeile, die auch erlaubt ist
-            cand_j = jv[np.argsort(np.abs(self.v[jv] - vv))[:3]]
-            j = int(cand_j[0])
-            if not rows or j != rows[-1]:
-                rows.append(j)
-        reach = int(math.ceil(Rt / self.g))
-        bnd = _trace_boundary(allowed)
-        for z in zs:
-            first = True
-            flip = False
+        def go(u, v, z, kind, t):
+            pts.append((u, v, z, kind, t))
+
+        def approach(u, v, z, t):
+            if pts:
+                go(pts[-1][0], pts[-1][1], z_safe, "luft", t)
+            go(u, v, z_safe, "luft", t)
+            go(u, v, z, "tauchen", t)
+
+        def zigzag(alw, z, ae, Rc, t, need_z):
+            ae = min(ae, 1.8 * Rc)
+            jv = np.nonzero(alw.any(0))[0]
+            v_lo, v_hi = self.v[jv[0]], self.v[jv[-1]]
+            nrow = max(1, int(math.ceil((v_hi - v_lo) / ae - 1e-9)) + 1)
+            vs = np.linspace(v_lo, v_hi, nrow) if nrow > 1 else np.array([0.5 * (v_lo + v_hi)])
+            rows = []
+            for vv in vs:
+                j = int(jv[np.argmin(np.abs(self.v[jv] - vv))])
+                if not rows or j != rows[-1]:
+                    rows.append(j)
+            reach = int(math.ceil(Rc / self.g))
+            first, flip = True, False
             for j in rows:
                 lo, hi = max(j - reach, 0), min(j + reach + 1, len(self.v))
-                col = allowed[:, j]
-                need = (self.top0[:, lo:hi] > z + 1e-6).any(1)
-                idx = np.nonzero(col)[0]
+                idx = np.nonzero(alw[:, j])[0]
+                need = (self.top0[:, lo:hi] > need_z + 1e-6).any(1)
                 if not len(idx) or not need[idx].any():
                     continue
                 runs = np.split(idx, np.nonzero(np.diff(idx) > 1)[0] + 1)
@@ -3774,46 +3778,80 @@ class PlaneStock(_StockBase):
                     runs = [r[::-1] for r in runs[::-1]]
                 for r in runs:
                     u0, u1 = self.u[r[0]], self.u[r[-1]]
-                    if first or not pts or abs(pts[-1][1] - self.v[j]) > ae * 1.6 + 1e-6 or len(runs) > 1:
-                        go(pts[-1][0] if pts else u0, pts[-1][1] if pts else self.v[j], z_safe, "luft")
-                        go(u0, self.v[j], z_safe, "luft")
-                        go(u0, self.v[j], z, "tauchen")
+                    if first or abs(pts[-1][1] - self.v[j]) > ae * 1.6 + 1e-6 or len(runs) > 1:
+                        approach(u0, self.v[j], z, t)
                         first = False
                     else:
-                        go(u0, self.v[j], z, "quer")
-                    go(u1, self.v[j], z, "fraesen")
+                        go(u0, self.v[j], z, "quer", t)
+                    go(u1, self.v[j], z, "fraesen", t)
                 flip = not flip
-            if len(bnd) > 2:
-                B = bnd[::max(1, int(round(0.4 / self.g)))]
-                bu, bv = self.u[B[:, 0]], self.v[B[:, 1]]
-                go(pts[-1][0] if pts else bu[0], pts[-1][1] if pts else bv[0], z_safe, "luft")
-                go(bu[0], bv[0], z_safe, "luft")
-                go(bu[0], bv[0], z, "tauchen")
-                for a, b in zip(bu[1:], bv[1:]):
-                    go(a, b, z, "kontur")
-                go(bu[0], bv[0], z, "kontur")
-        go(pts[-1][0], pts[-1][1], z_safe, "luft")
+
+        def contour(alw, z, t):
+            bnd = _trace_boundary(alw)
+            if len(bnd) <= 2:
+                return
+            B = bnd[::max(1, int(round(0.4 / self.g)))]
+            bu, bv = self.u[B[:, 0]], self.v[B[:, 1]]
+            approach(bu[0], bv[0], z, t)
+            for a, b in zip(bu[1:], bv[1:]):
+                go(a, b, z, "kontur", t)
+            go(bu[0], bv[0], z, "kontur", t)
+
+        def levels(ap, z_end):
+            zs, z = [], self.Hmax
+            while z > z_end + 1e-6:
+                z = max(z - ap, z_end)
+                zs.append(z)
+            return zs or [z_end]
+
+        zs = levels(ap, af)
+        for z in zs:
+            zigzag(allowed, z, ae, Rt, 0, z)
+            contour(allowed, z, 0)
+        radii = [Rt]
+        info = dict(layers=len(zs), finish_layers=0)
+        if finish:
+            R2 = finish["Rt"]
+            alw2 = self._allowed(R2)
+            if not alw2.any():
+                raise ValueError(f"Schlichtfräser Ø{fmt(2 * R2)} passt nicht in dieses Merkmal.")
+            go(pts[-1][0], pts[-1][1], z_safe, "luft", 0)
+            go(pts[-1][0], pts[-1][1], z_safe, "wechsel", 1)
+            if af > 1e-9:
+                zigzag(alw2, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
+            ap2 = finish.get("ap") or self.Hmax
+            zs2 = levels(ap2, 0.0)
+            for z in zs2:
+                contour(alw2, z, 1)
+            radii.append(R2)
+            info["finish_layers"] = len(zs2)
+        go(pts[-1][0], pts[-1][1], z_safe, "luft", pts[-1][4])
         self.path_pts = pts
-        P = np.array([(u, v, z) for u, v, z, _ in pts], float)
-        P3 = np.array([self.to3d(*p) for p in P])
-        dense, self.block = _dense_poses(np.hstack([P3, P]), max(0.3 * Rt, 0.15))
+        self.radii = radii
+        self.Rt = max(radii)
+        P = np.array([(u, v, z, t) for u, v, z, _, t in pts], float)
+        P3 = np.array([self.to3d(*p[:3]) for p in P])
+        dense, self.block = _dense_poses(np.hstack([P3, P]), max(0.3 * min(radii), 0.15))
         self.poses = dense
         self.tips = dense[:, :3]
+        self.tool_idx = np.round(dense[:, 6]).astype(int)
         self.axes = np.repeat(self.n[None, :], len(dense), axis=0)
         self.reset()
-        L = float(np.linalg.norm(np.diff(P3, axis=0), axis=1).sum())
-        return dict(layers=len(zs), blocks=len(pts), length=L, depth=self.Hmax)
+        Lp = float(np.linalg.norm(np.diff(P3, axis=0), axis=1).sum())
+        info.update(blocks=len(pts), length=Lp, depth=self.Hmax)
+        return info
 
     def _cut(self, j):
         u, v, z = self.poses[j, 3:6]
+        R = self.radii[self.tool_idx[j]] if hasattr(self, "tool_idx") else self.Rt
         if z >= self.Hmax:
             return False
-        i = np.nonzero(np.abs(self.u - u) <= self.Rt + 1e-9)[0]
-        k = np.nonzero(np.abs(self.v - v) <= self.Rt + 1e-9)[0]
+        i = np.nonzero(np.abs(self.u - u) <= R + 1e-9)[0]
+        k = np.nonzero(np.abs(self.v - v) <= R + 1e-9)[0]
         if not len(i) or not len(k):
             return False
         si, sk = slice(i[0], i[-1] + 1), slice(k[0], k[-1] + 1)
-        m = ((self.UU[si, sk] - u) ** 2 + (self.VV[si, sk] - v) ** 2 <= self.Rt ** 2 + 1e-9) & self.mask[si, sk]
+        m = ((self.UU[si, sk] - u) ** 2 + (self.VV[si, sk] - v) ** 2 <= R ** 2 + 1e-9) & self.mask[si, sk]
         upd = m & (self.top[si, sk] > z + 1e-9)
         if not upd.any():
             return False

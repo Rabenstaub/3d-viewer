@@ -14,6 +14,7 @@ Neu in 3.5.0
   Neues Demo-Teil demo\Demo_Wendelnut.s3d.
   ▶ Fräsen zeigen (Vorführung): Fräser fährt die Bahn ab, das Material verschwindet Stück für
   Stück – für Ringtasche, Wendelnut sowie Nut, Schlüsselfläche und Abflachung (Drehteil → Fräsen).
+  Bei Nut/Schlüsselfläche: Aufmaß Wand und Grund, danach Schlichten mit 2. Fräser (Grund, dann Wand).
 
 Neu in 3.4.0
 ------------

@@ -3,6 +3,7 @@ import sys, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import s3d_core as c
+import numpy as np
 
 DEMO = os.path.join(os.path.dirname(HERE), "demo")
 fehler = []
@@ -36,5 +37,13 @@ for f in c.milling_features(m, w):
     for D in ((4.0, 8.0, 9.6, 11.0) if f["kind"] == "Nut" else (8.0, 16.0)):
         st.plan(D / 2, 1.0, 0.6 * D)
         pruefe(f"{f['kind']} D{D:g}", st, 99.5)     # kein Steg in der Mitte
+    # Schruppen mit Aufmaß lässt genau das Aufmaß stehen, Schlichten nimmt es weg
+    st.plan(4.0, 1.0, 5.0, aw=0.3, af=0.2, finish=dict(Rt=3.0, ap=0, ae=3.6))
+    k1 = int(np.argmax(st.tool_idx == 1))
+    st.cut_to(k1 - 1)
+    rest = st.top[st.mask & (st.top0 > 0.25)]
+    if abs(rest.min() - 0.2) > 1e-6:
+        fehler.append(f"{f['kind']}: Aufmaß Grund {rest.min():.3f} statt 0,2")
+    pruefe(f"{f['kind']} +Schlichten", st, 99.5)
 print("Abweichungen:", len(fehler), *fehler)
 sys.exit(1 if fehler else 0)

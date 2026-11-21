@@ -1224,22 +1224,45 @@ class SimDialog(QtWidgets.QDialog):
         self.win, self.stock, self.plane = win, stock, plane
         self.setWindowTitle(f"Fräsen zeigen – {title}")
         self.setModal(False)
-        self.resize(470, 300 if plane else 150)
+        self.resize(470, 520 if plane else 150)
         lay = QtWidgets.QVBoxLayout(self)
         if plane:
             form = QtWidgets.QFormLayout()
             st = win.settings
             self.sp = {}
             hint = getattr(stock, "suggest_D", 6.0)
-            for key, lab, val, lo, hi in (("D", "Fräser-Ø", hint, 0.5, 100.0),
-                                          ("ap", "Zustellung je Schicht", 1.0, 0.05, 50.0),
-                                          ("ae", "Bahnabstand (Zickzack)", round(0.6 * hint, 2), 0.05, 100.0)):
+            def add(key, lab, val, lo, hi, keep=False):
                 sb = QtWidgets.QDoubleSpinBox()
                 sb.setRange(lo, hi)
                 sb.setDecimals(2)
-                sb.setValue(val if key != "ap" else float(st.value("sim_ap", val)))
+                try:
+                    sb.setValue(float(st.value(f"sim_{key}", val)) if keep else val)
+                except (TypeError, ValueError):
+                    sb.setValue(val)
                 form.addRow(lab, sb)
                 self.sp[key] = sb
+            form.addRow(QtWidgets.QLabel("<b>Schruppen</b>"))
+            add("D", "Fräser-Ø", hint, 0.5, 100.0)
+            add("ap", "Zustellung je Schicht", 1.0, 0.05, 50.0, True)
+            add("ae", "Bahnabstand (Zickzack)", round(0.6 * hint, 2), 0.05, 100.0)
+            add("aw", "Aufmaß Wand (je Seite)", 0.0, 0.0, 5.0, True)
+            add("af", "Aufmaß Grund", 0.0, 0.0, 5.0, True)
+            self.fin = QtWidgets.QCheckBox("Schlichten mit 2. Fräser (erst Grund, dann Wand)")
+            self.fin.setChecked(st.value("sim_fin", "false") in (True, "true"))
+            form.addRow(self.fin)
+            d2 = round(min(hint, max(hint * 0.75, 3.0)), 2)
+            add("D2", "Schlicht-Fräser-Ø", d2, 0.5, 100.0)
+            add("ap2", "Schlicht-Zustellung Wand (0 = ganze Tiefe)", 0.0, 0.0, 50.0, True)
+            add("ae2", "Bahnabstand Grund", round(0.7 * d2, 2), 0.05, 100.0)
+
+            def fin_toggle(on):
+                for k in ("D2", "ap2", "ae2"):
+                    self.sp[k].setEnabled(on)
+                if on and self.sp["aw"].value() == 0 and self.sp["af"].value() == 0:
+                    self.sp["aw"].setValue(0.3)
+                    self.sp["af"].setValue(0.2)
+            self.fin.toggled.connect(fin_toggle)
+            fin_toggle(self.fin.isChecked())
             b = QtWidgets.QPushButton("Bahn neu berechnen")
             b.clicked.connect(self.replan)
             form.addRow("", b)
@@ -1283,14 +1306,21 @@ class SimDialog(QtWidgets.QDialog):
     # ---------- Aufbau ----------
     def replan(self):
         v = {k: sb.value() for k, sb in self.sp.items()}
-        self.win.settings.setValue("sim_ap", v["ap"])
+        for k in ("ap", "aw", "af", "ap2"):
+            self.win.settings.setValue(f"sim_{k}", v[k])
+        fin = self.fin.isChecked()
+        self.win.settings.setValue("sim_fin", fin)
         try:
-            inf = self.stock.plan(v["D"] / 2, v["ap"], v["ae"])
+            inf = self.stock.plan(v["D"] / 2, v["ap"], v["ae"], aw=v["aw"], af=v["af"],
+                                  finish=dict(Rt=v["D2"] / 2, ap=v["ap2"], ae=v["ae2"]) if fin else None)
         except ValueError as ex:
             self.info.setText(f"<span style='color:#b00020'>{ex}</span>")
             return
-        self.plan_info = (f"{inf['layers']} Schichten · {inf['blocks']} Sätze · Weg {fmt(inf['length'])} mm · "
-                          f"Tiefe {fmt(inf['depth'])} mm")
+        self.plan_info = (f"Schruppen Ø{fmt(v['D'])}: {inf['layers']} Schichten"
+                          + (f", Aufmaß Wand {fmt(v['aw'])} / Grund {fmt(v['af'])}" if v["aw"] or v["af"] else "")
+                          + (f" · Schlichten Ø{fmt(v['D2'])}: Grund + Wand in {inf['finish_layers']} "
+                             f"{'Schicht' if inf['finish_layers'] == 1 else 'Schichten'}" if fin else "")
+                          + f"<br>{inf['blocks']} Sätze · Weg {fmt(inf['length'])} mm · Tiefe {fmt(inf['depth'])} mm")
         self._build()
 
     def _clear(self):
@@ -1308,17 +1338,20 @@ class SimDialog(QtWidgets.QDialog):
         st.reset()
         Rt = st.Rt
         depth = float(getattr(st, "D", 0) or getattr(st, "Hmax", 0) or (st.rtop - st.rf if hasattr(st, "rtop") else 5))
-        V, F, C = core.tool_mesh(Rt, depth + max(3.0, Rt), max(25.0, 4 * Rt))
-        md = gl.MeshData(vertexes=V, faces=F, faceColors=C)
-        self.tool = gl.GLMeshItem(meshdata=md, smooth=False, shader="s3d_cut", glOptions="opaque")
+        self.tools = []
+        for r in getattr(st, "radii", [Rt]):
+            V, F, C = core.tool_mesh(r, depth + max(3.0, r), max(25.0, 4 * r))
+            md = gl.MeshData(vertexes=V, faces=F, faceColors=C)
+            self.tools.append(gl.GLMeshItem(meshdata=md, smooth=False, shader="s3d_cut", glOptions="opaque"))
+        self.tool = self.tools[0]
         self.mat = gl.GLMeshItem(meshdata=gl.MeshData(vertexes=np.zeros((3, 3)), faces=np.array([[0, 1, 2]])),
                                  smooth=False, shader="s3d_cut", glOptions="opaque")
         P = st.tips
         self.path_item = gl.GLLinePlotItem(pos=P, color=(0.95, 0.5, 0.0, 0.8), width=1.2, antialias=True)
         self.path_item.setVisible(self.show_path.isChecked())
-        for it in (self.mat, self.tool, self.path_item):
+        for it in [self.mat, *self.tools, self.path_item]:
             self.win.view.addItem(it)
-        self.items = [self.mat, self.tool, self.path_item]
+        self.items = [self.mat, *self.tools, self.path_item]
         self._update(force=True)
         self.b_play.setText("▶ Start")
 
@@ -1372,11 +1405,16 @@ class SimDialog(QtWidgets.QDialog):
         a = np.radians(self.spin)
         u, v = math.cos(a) * u + math.sin(a) * v, -math.sin(a) * u + math.cos(a) * v
         M = QtGui.QMatrix4x4(u[0], v[0], w[0], tip[0], u[1], v[1], w[1], tip[1], u[2], v[2], w[2], tip[2], 0, 0, 0, 1)
-        self.tool.setTransform(M)
+        ti = int(st.tool_idx[st.k]) if hasattr(st, "tool_idx") and len(self.tools) > 1 else 0
+        for i, t in enumerate(self.tools):
+            t.setVisible(i == ti)
+        self.tools[ti].setTransform(M)
         n = len(st.poses)
         self.bar.setValue(int(1000 * st.k / max(n - 1, 1)))
         blk = int(st.block[st.k]) if hasattr(st, "block") and len(st.block) > st.k else st.k
         txt = f"Satz {blk} · {fmt(st.progress_text(), 1)} % ausgeräumt"
+        if len(self.tools) > 1:
+            txt = ("<b>Schlichten</b> · " if ti == 1 else "<b>Schruppen</b> · ") + txt
         if self.plane and getattr(self, "plan_info", ""):
             txt = self.plan_info + "<br>" + txt
         self.info.setText(txt)

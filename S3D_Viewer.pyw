@@ -2185,11 +2185,41 @@ class MainWindow(QtWidgets.QMainWindow):
         dr = QtWidgets.QDockWidget("Analyse", self)
         self.dock_right = dr
         dr.setObjectName("dock_right")
+        self._make_tabs_scrollable(self.tabs_right)
+        self._make_tabs_scrollable(self.tabs_left)
         dr.setWidget(self.tabs_right)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dr)
         for _dk in (self.dock_left, dr):
             _dk.visibilityChanged.connect(lambda _v: QtCore.QTimer.singleShot(0, self._sync_dock_actions))
         self.resizeDocks([dl, dr], [320, 470], Qt.Orientation.Horizontal)
+
+    @staticmethod
+    def _make_tabs_scrollable(tabs):
+        """Seiten mit vielen Bedienelementen in Bildlaufbereiche legen – so lässt sich das Seitenfenster beliebig
+        klein ziehen (auch mit großer Schrift); was nicht hineinpasst, wird gescrollt."""
+        for i in range(tabs.count()):
+            w = tabs.widget(i)
+            if isinstance(w, QtWidgets.QTabWidget):
+                MainWindow._make_tabs_scrollable(w)
+                w.setMinimumSize(0, 0)
+                continue
+            if isinstance(w, QtWidgets.QAbstractScrollArea):
+                w.setMinimumSize(0, 0)
+                continue
+            text, tip = tabs.tabText(i), tabs.tabToolTip(i)
+            cur = tabs.currentIndex()
+            tabs.removeTab(i)
+            sa = QtWidgets.QScrollArea()
+            sa.setWidgetResizable(True)
+            sa.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+            sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            sa.setWidget(w)
+            sa.setMinimumSize(0, 0)
+            sa.setStyleSheet("QScrollArea { background: transparent; } QScrollArea > QWidget > QWidget { background: transparent; }")
+            tabs.insertTab(i, sa, text)
+            tabs.setTabToolTip(i, tip)
+            tabs.setCurrentIndex(cur)
+        tabs.setMinimumSize(0, 0)
 
     def _build_wcs_tab(self):
         w = QtWidgets.QWidget()

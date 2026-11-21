@@ -21,6 +21,7 @@ Neu in 3.5.0
   Schlichtaufmaß nach dem Schruppen grün, nicht erreichte Stellen rot.
   Strg + Mausrad über einem Fenster (Analyse, Daten, „Fräsen zeigen“, Ringtasche …): Schrift nur dort größer/kleiner
   (wird gespeichert, Strg + Mausrad-Klick = 100 %).
+  Seitenfenster lassen sich beliebig klein ziehen (auch unten angedockt) – der Inhalt wird dann gescrollt.
 
 Neu in 3.4.0
 ------------

@@ -953,7 +953,10 @@ class RingPocketDialog(QtWidgets.QDialog):
         b2.clicked.connect(self.save)
         b3 = QtWidgets.QPushButton("Schließen")
         b3.clicked.connect(self.close)
-        for b in (b1, b2, b3):
+        b4 = QtWidgets.QPushButton("▶ Fräsen zeigen")
+        b4.setToolTip("Vorführung: Fräser fährt die Bahn ab, das Material in der Tasche verschwindet")
+        b4.clicked.connect(self.simulate)
+        for b in (b1, b4, b2, b3):
             bl.addWidget(b)
         lay.addLayout(bl)
         warn = QtWidgets.QLabel("Nur die Bahn – ohne Kollisionsprüfung mit Spannmittel oder Werkzeughalter. "
@@ -1019,6 +1022,14 @@ class RingPocketDialog(QtWidgets.QDialog):
             except Exception:
                 pass
         self.items = []
+
+    def simulate(self):
+        path = self.compute()
+        if path is None:
+            return
+        self.clear_preview()
+        st = core.RingStock(self.win.model, self.win.wcs, self.prof, path, self.sp["D"].value() / 2)
+        self.win.open_sim(st, "Ringtasche")
 
     def save(self):
         if self.compute() is None:
@@ -1097,7 +1108,8 @@ class GrooveDialog(QtWidgets.QDialog):
         self.summary.setWordWrap(True)
         lay.addWidget(self.summary)
         bl = QtWidgets.QHBoxLayout()
-        for t, f in (("Berechnen + im Bild zeigen", self.preview), ("Als .EIA speichern …", self.save),
+        for t, f in (("Berechnen + im Bild zeigen", self.preview), ("▶ Fräsen zeigen", self.simulate),
+                     ("Als .EIA speichern …", self.save),
                      ("Mittellinie als CSV …", self.save_csv), ("Schließen", self.close)):
             b = QtWidgets.QPushButton(t)
             b.clicked.connect(f)
@@ -1175,6 +1187,13 @@ class GrooveDialog(QtWidgets.QDialog):
             fh.write(self.txt)
         self.win.status.showMessage(f"Gespeichert: {fn}")
 
+    def simulate(self):
+        cl = self.compute()
+        if cl is None:
+            return
+        self.clear_preview()
+        self.win.open_sim(core.GrooveStock(self.win.model, cl), "Nut am Mantel")
+
     def save_csv(self):
         cl = self.compute()
         if cl is None:
@@ -1192,6 +1211,178 @@ class GrooveDialog(QtWidgets.QDialog):
 
     def closeEvent(self, ev):
         self.clear_preview()
+        super().closeEvent(ev)
+
+
+class SimDialog(QtWidgets.QDialog):
+    """Fräs-Vorführung: Fräser fährt die Bahn ab, das Restmaterial (bronze) verschwindet Stück für Stück."""
+
+    MAT = (0.80, 0.60, 0.34, 1.0)
+
+    def __init__(self, win, stock, title, plane=False):
+        super().__init__(win)
+        self.win, self.stock, self.plane = win, stock, plane
+        self.setWindowTitle(f"Fräsen zeigen – {title}")
+        self.setModal(False)
+        self.resize(470, 300 if plane else 150)
+        lay = QtWidgets.QVBoxLayout(self)
+        if plane:
+            form = QtWidgets.QFormLayout()
+            st = win.settings
+            self.sp = {}
+            hint = getattr(stock, "suggest_D", 6.0)
+            for key, lab, val, lo, hi in (("D", "Fräser-Ø", hint, 0.5, 100.0),
+                                          ("ap", "Zustellung je Schicht", 1.0, 0.05, 50.0),
+                                          ("ae", "Bahnabstand (Zickzack)", round(0.6 * hint, 2), 0.05, 100.0)):
+                sb = QtWidgets.QDoubleSpinBox()
+                sb.setRange(lo, hi)
+                sb.setDecimals(2)
+                sb.setValue(val if key != "ap" else float(st.value("sim_ap", val)))
+                form.addRow(lab, sb)
+                self.sp[key] = sb
+            b = QtWidgets.QPushButton("Bahn neu berechnen")
+            b.clicked.connect(self.replan)
+            form.addRow("", b)
+            lay.addLayout(form)
+        self.info = QtWidgets.QLabel("")
+        self.info.setWordWrap(True)
+        lay.addWidget(self.info)
+        self.bar = QtWidgets.QProgressBar()
+        self.bar.setRange(0, 1000)
+        lay.addWidget(self.bar)
+        hl = QtWidgets.QHBoxLayout()
+        self.b_play = QtWidgets.QPushButton("▶ Start")
+        self.b_play.clicked.connect(self.toggle)
+        b_re = QtWidgets.QPushButton("⟲ Neu")
+        b_re.clicked.connect(self.restart)
+        b_end = QtWidgets.QPushButton("⏭ Ende")
+        b_end.clicked.connect(self.to_end)
+        for b in (self.b_play, b_re, b_end):
+            hl.addWidget(b)
+        hl.addWidget(QtWidgets.QLabel("Tempo"))
+        self.speed = QtWidgets.QSlider(Qt.Orientation.Horizontal)
+        self.speed.setRange(1, 100)
+        self.speed.setValue(40)
+        hl.addWidget(self.speed, 1)
+        lay.addLayout(hl)
+        self.show_path = QtWidgets.QCheckBox("Bahn als Linie zeigen")
+        self.show_path.setChecked(True)
+        self.show_path.toggled.connect(lambda v: self.path_item is not None and self.path_item.setVisible(v))
+        lay.addWidget(self.show_path)
+        self.items = []
+        self.path_item = None
+        self.spin = 0.0
+        self.timer = QtCore.QTimer(self)
+        self.timer.setInterval(30)
+        self.timer.timeout.connect(self.tick)
+        if plane:
+            self.replan()
+        else:
+            self._build()
+
+    # ---------- Aufbau ----------
+    def replan(self):
+        v = {k: sb.value() for k, sb in self.sp.items()}
+        self.win.settings.setValue("sim_ap", v["ap"])
+        try:
+            inf = self.stock.plan(v["D"] / 2, v["ap"], v["ae"])
+        except ValueError as ex:
+            self.info.setText(f"<span style='color:#b00020'>{ex}</span>")
+            return
+        self.plan_info = (f"{inf['layers']} Schichten · {inf['blocks']} Sätze · Weg {fmt(inf['length'])} mm · "
+                          f"Tiefe {fmt(inf['depth'])} mm")
+        self._build()
+
+    def _clear(self):
+        self.timer.stop()
+        for it in self.items:
+            try:
+                self.win.view.removeItem(it)
+            except Exception:
+                pass
+        self.items, self.path_item = [], None
+
+    def _build(self):
+        self._clear()
+        st = self.stock
+        st.reset()
+        Rt = st.Rt
+        depth = float(getattr(st, "D", 0) or getattr(st, "Hmax", 0) or (st.rtop - st.rf if hasattr(st, "rtop") else 5))
+        V, F, C = core.tool_mesh(Rt, depth + max(3.0, Rt), max(25.0, 4 * Rt))
+        md = gl.MeshData(vertexes=V, faces=F, faceColors=C)
+        self.tool = gl.GLMeshItem(meshdata=md, smooth=False, shader="s3d_cut", glOptions="opaque")
+        self.mat = gl.GLMeshItem(meshdata=gl.MeshData(vertexes=np.zeros((3, 3)), faces=np.array([[0, 1, 2]])),
+                                 smooth=False, shader="s3d_cut", glOptions="opaque")
+        P = st.tips
+        self.path_item = gl.GLLinePlotItem(pos=P, color=(0.95, 0.5, 0.0, 0.8), width=1.2, antialias=True)
+        self.path_item.setVisible(self.show_path.isChecked())
+        for it in (self.mat, self.tool, self.path_item):
+            self.win.view.addItem(it)
+        self.items = [self.mat, self.tool, self.path_item]
+        self._update(force=True)
+        self.b_play.setText("▶ Start")
+
+    # ---------- Ablauf ----------
+    def toggle(self):
+        if self.timer.isActive():
+            self.timer.stop()
+            self.b_play.setText("▶ Weiter")
+        else:
+            if self.stock.k >= len(self.stock.poses) - 1:
+                self.stock.reset()
+            self.timer.start()
+            self.b_play.setText("⏸ Pause")
+
+    def restart(self):
+        self.timer.stop()
+        self.stock.reset()
+        self._update(force=True)
+        self.b_play.setText("▶ Start")
+
+    def to_end(self):
+        self.stock.cut_to(len(self.stock.poses) - 1)
+        self._update(force=True)
+
+    def tick(self):
+        st = self.stock
+        n = len(st.poses)
+        sp = self.speed.value()
+        step = max(1, int(round((sp / 100.0) ** 2 * max(n / 300.0, 8.0))))
+        changed = st.cut_to(st.k + step)
+        self.spin += 35.0
+        self._update(force=changed)
+        if st.k >= n - 1:
+            self.timer.stop()
+            self.b_play.setText("▶ Nochmal")
+
+    def _update(self, force=False):
+        st = self.stock
+        if force:
+            V, F = st.mesh()
+            if len(F):
+                self.mat.setMeshData(vertexes=V, faces=F,
+                                     vertexColors=np.tile(np.array(self.MAT, np.float32), (len(V), 1)))
+                self.mat.setVisible(True)
+            else:
+                self.mat.setVisible(False)
+        tip, ax = st.tool()
+        w = ax / np.linalg.norm(ax)
+        u = core.any_perp(w)
+        v = np.cross(w, u)
+        a = np.radians(self.spin)
+        u, v = math.cos(a) * u + math.sin(a) * v, -math.sin(a) * u + math.cos(a) * v
+        M = QtGui.QMatrix4x4(u[0], v[0], w[0], tip[0], u[1], v[1], w[1], tip[1], u[2], v[2], w[2], tip[2], 0, 0, 0, 1)
+        self.tool.setTransform(M)
+        n = len(st.poses)
+        self.bar.setValue(int(1000 * st.k / max(n - 1, 1)))
+        blk = int(st.block[st.k]) if hasattr(st, "block") and len(st.block) > st.k else st.k
+        txt = f"Satz {blk} · {fmt(st.progress_text(), 1)} % ausgeräumt"
+        if self.plane and getattr(self, "plan_info", ""):
+            txt = self.plan_info + "<br>" + txt
+        self.info.setText(txt)
+
+    def closeEvent(self, ev):
+        self._clear()
         super().closeEvent(ev)
 
 
@@ -4946,6 +5137,46 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             return []
 
+    def open_sim(self, stock, title, plane=False):
+        old = getattr(self, "_sim_dlg", None)
+        if old is not None:
+            old.close()
+        try:
+            self.clear_selection()              # rote Markierung würde das Material verdecken
+        except Exception:
+            pass
+        self._sim_dlg = SimDialog(self, stock, title, plane=plane)
+        self._sim_dlg.show()
+        return self._sim_dlg
+
+    def open_plane_sim(self):
+        if self.model is None:
+            return
+        feats = self._mill_feats()
+        faces = {e.ref for e in self.sel if e.kind == "face"}
+        feat = next((f for f in feats if faces & set(f["faces"])), None)
+        if feat is None:
+            rows = sorted({i.row() for i in self.mill_table.selectedIndexes()})
+            if rows and rows[0] < len(feats):
+                feat = feats[rows[0]]
+        if feat is None and len(feats) == 1:
+            feat = feats[0]
+        if feat is None:
+            QtWidgets.QMessageBox.information(self, APP_NAME, "Bitte zuerst eine Nut, Schlüsselfläche oder Abflachung "
+                                              "anklicken (im Bild oder oben in der Tabelle).")
+            return
+        ff = core.plane_floor_face(self.model, feat)
+        if ff is None:
+            QtWidgets.QMessageBox.information(self, APP_NAME, "Für dieses Merkmal wurde kein ebener Grund gefunden.")
+            return
+        st = core.PlaneStock(self.model, feat, ff)
+        if not st.mask.any():
+            QtWidgets.QMessageBox.information(self, APP_NAME, "Über diesem Grund liegt kein Material – nichts zu fräsen.")
+            return
+        w = feat.get("width") or 10.0
+        st.suggest_D = float(min(w * 0.8, 16.0)) if feat["kind"].startswith("Nut") else float(min(max(w * 0.4, 6.0), 25.0))
+        self.open_sim(st, feat["kind"], plane=True)
+
     def open_groove(self):
         if self.model is None:
             return
@@ -5778,6 +6009,11 @@ class MainWindow(QtWidgets.QMainWindow):
         b.setToolTip("Vorher die Nut anklicken (Grund, gern mit Strg auch die Wände). Die Mittellinie wird als Z/C-Bahn "
                      "ausgegeben – G01 mit W/H inkrementell wie bei Mazak-Wendelnut-Programmen.")
         b.clicked.connect(self.open_groove)
+        l5.addWidget(b)
+        b = QtWidgets.QPushButton("▶ Fräsen zeigen (Nut, Schlüsselfläche, Abflachung) …")
+        b.setToolTip("Vorführung: Merkmal oben in der Tabelle oder im Bild wählen – ein Fräser räumt es "
+                     "schichtweise aus (Zickzack + Kontur), das Material verschwindet Stück für Stück.")
+        b.clicked.connect(self.open_plane_sim)
         l5.addWidget(b)
         tabs.addTab(w5, "Fräsen")
         self._groove_rows, self._tool_rows, self._mill_rows = [], [], []

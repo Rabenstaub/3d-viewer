@@ -3392,3 +3392,457 @@ def groove_path_3d(model, cl, radius=None):
     r = cl["r_floor"] if radius is None else radius
     th = np.radians(np.asarray(cl["c"], float))
     return mo + np.outer(cl["a"], md) + r * (np.outer(np.cos(th), u0) + np.outer(np.sin(th), v0))
+
+
+# ---------------------------------------------------------------------------
+# Fräs-Simulation (Vorführung): Restmaterial als Höhenfeld, Fräser fährt die Bahn ab
+# ---------------------------------------------------------------------------
+
+def _dense_poses(P, step):
+    """Zwischenpunkte, damit der Fräser zwischen zwei Sätzen nichts überspringt. P: (n, k) Parameter,
+    Länge je Abschnitt über die ersten drei Spalten (3D-Punkte)."""
+    out = [P[0]]
+    idx = [0]
+    for i in range(1, len(P)):
+        L = float(np.linalg.norm(P[i, :3] - P[i - 1, :3]))
+        n = max(1, int(math.ceil(L / step)))
+        for k in range(1, n + 1):
+            out.append(P[i - 1] + (P[i] - P[i - 1]) * (k / n))
+            idx.append(i)
+    return np.array(out), np.array(idx)
+
+
+class _StockBase:
+    """Gemeinsame Abspiel-Logik: poses = (n, 3+…) mit 3D-Spitze vorne; cut_to(k) fräst bis Pose k."""
+
+    def reset(self):
+        self.k = 0
+        self._reset_state()
+
+    def cut_to(self, k):
+        k = int(min(max(k, 0), len(self.poses) - 1))
+        changed = False
+        for j in range(self.k + 1, k + 1):
+            changed |= self._cut(j)
+        self.k = max(self.k, k)
+        return changed
+
+    def tool(self, k=None):
+        """(Spitze 3D, Richtung der Werkzeugachse vom Teil weg)"""
+        k = self.k if k is None else int(k)
+        return self.tips[k], self.axes[k]
+
+
+class RingStock(_StockBase):
+    """Ringtasche in der Stirnseite: Restmaterial als Höhenfeld über (r, θ), Fräser axial."""
+
+    def __init__(self, model, wcs, prof, path, Rt, dth=1.5):
+        mo, md = main_axis(model)
+        e1, e2 = angle_frame(md, wcs)
+        self.mo, self.md, self.e1, self.e2 = mo, md, e1, e2
+        s, a_top = prof["s"], prof["a_top"]
+        D = (prof["a_floor"] - a_top) * s
+        self.s, self.a_top, self.D, self.Rt = s, a_top, D, Rt
+        lev = np.linspace(0.0, D, 241)
+        rows = []
+        for d in lev:
+            a = a_top + s * min(max(d, 1e-4), D - 1e-4)
+            ro = _wall_r(prof["outer"], a, "out")
+            ri = _wall_r(prof["inner"], a, "in") if prof["inner"] is not None else 0.0
+            if ro is not None:
+                rows.append((d, ri if ri is not None else 0.0, ro))
+        rows = np.array(rows)
+        rmin, rmax = float(rows[:, 1].min()), float(rows[:, 2].max())
+        dr = min(0.25, max((rmax - rmin) / 40.0, 0.05))
+        R = np.linspace(rmin, rmax, max(3, int(math.ceil((rmax - rmin) / dr)) + 1))
+        B = np.full(len(R), -1.0)
+        for d, ri, ro in rows:
+            inside = (R >= ri - 1e-6) & (R <= ro + 1e-6)
+            B[inside] = np.maximum(B[inside], d)
+        B[B >= lev[-2]] = D
+        T = np.radians(np.arange(0.0, 360.0 + 1e-9, dth))
+        self.R, self.T, self.B = R, T, B
+        self.X = np.outer(R, np.cos(T))
+        self.Y = np.outer(R, np.sin(T))
+        self.BB = np.repeat(B[:, None], len(T), axis=1)
+        # Bahn → Posen (3D-Spitze, a, r, c)
+        pts = np.array([(a, r, c) for a, r, c, _ in path["points"]], float)
+        P3 = np.array([mo + a * md + r * (math.cos(math.radians(c)) * e1 + math.sin(math.radians(c)) * e2)
+                       for a, r, c in pts])
+        dense, self.block = _dense_poses(np.hstack([P3, pts]), max(0.3 * Rt, 0.15))
+        self.poses = dense
+        self.tips = dense[:, :3]
+        self.axes = np.repeat((-s * md)[None, :], len(dense), axis=0)
+        self.reset()
+
+    def _reset_state(self):
+        self.t = np.zeros_like(self.BB)
+
+    def _cut(self, j):
+        a, r, c = self.poses[j, 3:6]
+        d = (a - self.a_top) * self.s
+        if d <= 0:
+            return False
+        rows = np.nonzero(np.abs(self.R - r) <= self.Rt + 1e-9)[0]
+        if not len(rows):
+            return False
+        cr = math.radians(c)
+        x, y = r * math.cos(cr), r * math.sin(cr)
+        sl = slice(rows[0], rows[-1] + 1)
+        m = (self.X[sl] - x) ** 2 + (self.Y[sl] - y) ** 2 <= self.Rt ** 2 + 1e-9
+        new = np.minimum(d, self.BB[sl])
+        upd = m & (new > self.t[sl] + 1e-9)
+        if not upd.any():
+            return False
+        self.t[sl][upd] = new[upd]
+        return True
+
+    def mesh(self):
+        """(Ecken (n,3), Dreiecke (m,3)) des Restmaterials."""
+        BB, t = self.BB, self.t
+        outside = BB <= 0
+        done = (t >= BB - 1e-3) | outside
+        h = np.where(done, BB - 0.01, t)
+        h = np.where(outside, 0.0, h)
+        a = self.a_top + self.s * h
+        V = (self.mo[None, None, :] + a[..., None] * self.md[None, None, :]
+             + self.X[..., None] * self.e1[None, None, :] + self.Y[..., None] * self.e2[None, None, :])
+        nr, nt = t.shape
+        idx = np.arange(nr * nt).reshape(nr, nt)
+        q00, q10, q01, q11 = idx[:-1, :-1], idx[1:, :-1], idx[:-1, 1:], idx[1:, 1:]
+        dn, ou = done.ravel(), outside.ravel()
+        keep = ~(dn[q00] & dn[q10] & dn[q01] & dn[q11]) & ~(ou[q00] | ou[q10] | ou[q01] | ou[q11])
+        q00, q10, q01, q11 = q00[keep], q10[keep], q01[keep], q11[keep]
+        F = np.vstack([np.stack([q00, q10, q11], 1), np.stack([q00, q11, q01], 1)])
+        return V.reshape(-1, 3), F
+
+    def progress_text(self):
+        rest = np.clip(self.BB - self.t, 0, None)[self.BB > 0]
+        tot = np.clip(self.BB, 0, None)[self.BB > 0]
+        return 100.0 * (1.0 - rest.sum() / max(tot.sum(), 1e-9))
+
+
+class GrooveStock(_StockBase):
+    """Nut am Mantel: Restmaterial als Höhenfeld über (Z, C) im Nutbereich, Fräser radial auf Nutgrund."""
+
+    def __init__(self, model, cl, da=0.2):
+        mo, md = main_axis(model)
+        u0 = any_perp(md)
+        v0 = np.cross(md, u0)
+        self.mo, self.md, self.u0, self.v0 = mo, md, u0, v0
+        rf, rt, w = cl["r_floor"], cl["r_top"], cl["width"]
+        self.rf, self.rtop, self.Rt = rf, rt, 0.5 * w
+        a, c = np.asarray(cl["a"], float), np.radians(np.asarray(cl["c"], float))
+        marg = self.Rt + 2 * da
+        A = np.arange(a.min() - marg, a.max() + marg + da, da)
+        dth = da / rf
+        T = np.arange(c.min() - marg / rf, c.max() + marg / rf + dth, dth)
+        self.A, self.T = A, T
+        AA, TT = np.meshgrid(A, T, indexing="ij")
+        self.AA, self.SS = AA, TT * rf
+        cs = np.column_stack([a, c * rf])
+        flat = np.column_stack([AA.ravel(), self.SS.ravel()])
+        dmin = np.full(len(flat), np.inf)
+        for k in range(0, len(flat), 20000):
+            q = flat[k:k + 20000]
+            dmin[k:k + 20000] = np.sqrt(((q[:, None, :] - cs[None, :, :]) ** 2).sum(-1)).min(1)
+        self.mask = (dmin <= self.Rt + 1e-6).reshape(AA.shape)
+        self.cos, self.sin = np.cos(TT), np.sin(TT)
+        P3 = np.array([mo + x * md + rf * (math.cos(t) * u0 + math.sin(t) * v0) for x, t in zip(a, c)])
+        dense, self.block = _dense_poses(np.hstack([P3, a[:, None], c[:, None]]), max(0.3 * self.Rt, 0.1))
+        self.poses = dense
+        self.tips = dense[:, :3]
+        th = dense[:, 4]
+        self.axes = np.cos(th)[:, None] * u0[None, :] + np.sin(th)[:, None] * v0[None, :]
+        self.reset()
+
+    def _reset_state(self):
+        self.cut = np.zeros_like(self.mask)
+
+    def _cut(self, j):
+        a, th = self.poses[j, 3], self.poses[j, 4]
+        cols = np.nonzero(np.abs(self.A - a) <= self.Rt + 1e-9)[0]
+        if not len(cols):
+            return False
+        sl = slice(cols[0], cols[-1] + 1)
+        m = ((self.AA[sl] - a) ** 2 + (self.SS[sl] - th * self.rf) ** 2 <= (self.Rt + 1e-6) ** 2) & self.mask[sl]
+        upd = m & ~self.cut[sl]
+        if not upd.any():
+            return False
+        self.cut[sl][upd] = True
+        return True
+
+    def mesh(self):
+        done = self.cut | ~self.mask
+        r = np.where(self.cut, self.rf + 0.01, self.rtop - 0.003)
+        V = (self.mo[None, None, :] + self.AA[..., None] * self.md[None, None, :]
+             + (r * self.cos)[..., None] * self.u0[None, None, :] + (r * self.sin)[..., None] * self.v0[None, None, :])
+        na, nt = r.shape
+        idx = np.arange(na * nt).reshape(na, nt)
+        q00, q10, q01, q11 = idx[:-1, :-1], idx[1:, :-1], idx[:-1, 1:], idx[1:, 1:]
+        dn, mk = done.ravel(), self.mask.ravel()
+        keep = ~(dn[q00] & dn[q10] & dn[q01] & dn[q11]) & (mk[q00] & mk[q10] & mk[q01] & mk[q11])
+        q00, q10, q01, q11 = q00[keep], q10[keep], q01[keep], q11[keep]
+        F = np.vstack([np.stack([q00, q10, q11], 1), np.stack([q00, q11, q01], 1)])
+        return V.reshape(-1, 3), F
+
+    def progress_text(self):
+        return 100.0 * self.cut[self.mask].sum() / max(self.mask.sum(), 1)
+
+
+def tool_mesh(Rt, L_flute, L_shank, n=40, flutes=4):
+    """Schaftfräser entlang +z (Spitze bei z=0): Ecken, Dreiecke, Farbe je Dreieck."""
+    ang = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    ring = lambda r, z: np.column_stack([r * np.cos(ang), r * np.sin(ang), np.full(n, z)])
+    rs = 0.92 * Rt
+    L2 = L_flute + L_shank
+    V = np.vstack([ring(Rt, 0), ring(Rt, L_flute), ring(rs, L_flute), ring(rs, L2), [[0, 0, 0]], [[0, 0, L2]]])
+    F, C = [], []
+    gold, dark, steel = (0.86, 0.70, 0.28, 1), (0.35, 0.28, 0.10, 1), (0.70, 0.72, 0.76, 1)
+    for i in range(n):
+        j = (i + 1) % n
+        stripe = (i * flutes // n) != (j * flutes // n) or (i * flutes) % n < 2
+        for base, col in ((0, dark if stripe else gold), (2 * n, steel)):
+            F += [[base + i, base + n + i, base + n + j], [base + i, base + n + j, base + j]]
+            C += [col, col]
+        F += [[4 * n, j, i]]
+        C += [dark]
+        F += [[4 * n + 1, 3 * n + i, 3 * n + j], [n + i, 2 * n + i, 2 * n + j], [n + i, 2 * n + j, n + j]]
+        C += [steel, steel, steel]
+    return V, np.array(F), np.array(C, float)
+
+
+def _outer_radius_fn(model):
+    """Radius der gedrehten Außenkontur in Abhängigkeit von a (vektorisiert, 0 außerhalb des Teils)."""
+    lc = lathe_contours(model)
+    if not lc or not lc["outer"]:
+        return lambda a: np.zeros_like(np.asarray(a, float))
+    P = np.array([(p[0], p[1]) for p in _profile_samples(lc["outer"])], float)
+
+    def fn(a):
+        a = np.asarray(a, float)
+        out = np.zeros_like(a)
+        for p, q in zip(P[:-1], P[1:]):
+            lo, hi = min(p[0], q[0]), max(p[0], q[0])
+            if hi - lo < 1e-9:
+                m = np.abs(a - lo) < 1e-6
+                out[m] = np.maximum(out[m], max(p[1], q[1]))
+                continue
+            m = (a >= lo - 1e-9) & (a <= hi + 1e-9)
+            out[m] = np.maximum(out[m], p[1] + (a[m] - p[0]) / (q[0] - p[0]) * (q[1] - p[1]))
+        return out
+    return fn
+
+
+def _trace_boundary(mask):
+    """Rand einer zusammenhängenden Zellfläche als geschlossene Zellfolge (Moore-Nachbarschaft)."""
+    nz = np.argwhere(mask)
+    if not len(nz):
+        return np.zeros((0, 2), int)
+    start = tuple(nz[np.lexsort((nz[:, 1], nz[:, 0]))][0])
+    nb = [(-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1)]
+    H, W = mask.shape
+    ok = lambda p: 0 <= p[0] < H and 0 <= p[1] < W and mask[p]
+    out = [start]
+    cur, back = start, 6                           # von „links“ gekommen
+    for _ in range(4 * mask.size):
+        found = False
+        for k in range(8):
+            d = (back + 1 + k) % 8
+            q = (cur[0] + nb[d][0], cur[1] + nb[d][1])
+            if ok(q):
+                back = (d + 4) % 8
+                cur = q
+                found = True
+                break
+        if not found or (cur == start and len(out) > 2):
+            break
+        out.append(cur)
+    return np.array(out)
+
+
+class PlaneStock(_StockBase):
+    """Fräsmerkmal mit ebenem Grund am Drehteil (Nut, Schlüsselfläche, Abflachung): Restmaterial als
+    Höhenfeld über dem Grund, Fräser senkrecht zum Grund. Bahn: schichtweise Zickzack + Kontur."""
+
+    def __init__(self, model, feat, floor_face, g=None):
+        mo, md = main_axis(model)
+        f = model.faces[floor_face]
+        n = unit(f.surf.n - (f.surf.n @ md) * md)
+        cen = f.triangles.reshape(-1, 3).mean(0)
+        foot = mo + ((cen - mo) @ md) * md
+        if (cen - foot) @ n < 0:
+            n = -n
+        h = float((cen - foot) @ n)
+        vdir = np.cross(n, md)
+        self.mo, self.md, self.n, self.vdir, self.h = mo, md, n, vdir, h
+        T = f.triangles - mo
+        U = T @ md
+        Vv = T @ vdir
+        span = max(U.max() - U.min(), Vv.max() - Vv.min())
+        g = g or float(np.clip(span / 180.0, 0.08, 0.4))
+        marg = 0.25 * span + 3 * g
+        self.u = np.arange(U.min() - marg, U.max() + marg + g, g)
+        self.v = np.arange(Vv.min() - marg, Vv.max() + marg + g, g)
+        UU, VV = np.meshgrid(self.u, self.v, indexing="ij")
+        self.UU, self.VV, self.g = UU, VV, g
+        # Grundfläche rastern
+        mask = np.zeros(UU.shape, bool)
+        for tu, tv in zip(U, Vv):
+            i0, i1 = np.searchsorted(self.u, [tu.min() - g, tu.max() + g])
+            j0, j1 = np.searchsorted(self.v, [tv.min() - g, tv.max() + g])
+            if i1 <= i0 or j1 <= j0:
+                continue
+            pu, pv = UU[i0:i1, j0:j1], VV[i0:i1, j0:j1]
+            d0 = (tu[1] - tu[0]) * (pv - tv[0]) - (tv[1] - tv[0]) * (pu - tu[0])
+            d1 = (tu[2] - tu[1]) * (pv - tv[1]) - (tv[2] - tv[1]) * (pu - tu[1])
+            d2 = (tu[0] - tu[2]) * (pv - tv[2]) - (tv[0] - tv[2]) * (pu - tu[2])
+            e = 1e-9
+            ins = ((d0 >= -e) & (d1 >= -e) & (d2 >= -e)) | ((d0 <= e) & (d1 <= e) & (d2 <= e))
+            mask[i0:i1, j0:j1] |= ins
+        Rp = _outer_radius_fn(model)(self.u)[:, None]
+        top = np.sqrt(np.clip(Rp ** 2 - VV ** 2, 0, None)) - h
+        self.mask = mask & (top > 1e-3)
+        self.top0 = np.where(self.mask, np.clip(top, 0, None), 0.0)
+        self.wall = (~mask) & (top > 0.05)              # Material neben dem Grund (Schulter, Nutwand)
+        self.Hmax = float(self.top0.max()) if self.mask.any() else 0.0
+        self.feat = feat
+        self.poses = np.zeros((1, 6))
+        self.tips = np.zeros((1, 3))
+        self.axes = n[None, :]
+        self.reset()
+
+    def _reset_state(self):
+        self.top = self.top0.copy()
+
+    def to3d(self, u, v, z):
+        return self.mo + u * self.md + v * self.vdir + (self.h + z) * self.n
+
+    def plan(self, Rt, ap, ae, safety=2.0):
+        """Bahn erzeugen (Fräsermitte u, v, Höhe z über Grund). Liefert info dict."""
+        self.Rt = Rt
+        wb = self.wall & ~np.all([np.roll(self.wall, s, ax) for ax in (0, 1) for s in (1, -1)], axis=0)
+        W = np.column_stack([self.UU[wb], self.VV[wb]])
+        cand = self.mask.copy()
+        dist = np.full(self.UU.shape, np.inf)
+        if len(W):
+            q = np.column_stack([self.UU[cand], self.VV[cand]])
+            dd = np.empty(len(q))
+            for k in range(0, len(q), 4000):
+                dd[k:k + 4000] = np.sqrt(((q[k:k + 4000, None, :] - W[None, :, :]) ** 2).sum(-1)).min(1)
+            dist[cand] = dd
+        allowed = cand & (dist >= Rt - 0.5 * self.g)
+        if not allowed.any():
+            raise ValueError(f"Fräser Ø{fmt(2 * Rt)} passt nicht in dieses Merkmal.")
+        zs = []
+        z = self.Hmax
+        while z > 1e-6:
+            z = max(z - ap, 0.0)
+            zs.append(z)
+        if not zs:
+            zs = [0.0]
+        z_safe = self.Hmax + safety
+        pts = []
+
+        def go(u, v, z, kind):
+            pts.append((u, v, z, kind))
+        step_rows = max(1, int(round(ae / self.g)))
+        rows = list(range(0, len(self.v), step_rows))
+        reach = int(math.ceil(Rt / self.g))
+        bnd = _trace_boundary(allowed)
+        for z in zs:
+            first = True
+            flip = False
+            for j in rows:
+                lo, hi = max(j - reach, 0), min(j + reach + 1, len(self.v))
+                col = allowed[:, j]
+                need = (self.top0[:, lo:hi] > z + 1e-6).any(1)
+                idx = np.nonzero(col)[0]
+                if not len(idx) or not need[idx].any():
+                    continue
+                runs = np.split(idx, np.nonzero(np.diff(idx) > 1)[0] + 1)
+                if flip:
+                    runs = [r[::-1] for r in runs[::-1]]
+                for r in runs:
+                    u0, u1 = self.u[r[0]], self.u[r[-1]]
+                    if first or not pts or abs(pts[-1][1] - self.v[j]) > ae * 1.6 + 1e-6 or len(runs) > 1:
+                        go(pts[-1][0] if pts else u0, pts[-1][1] if pts else self.v[j], z_safe, "luft")
+                        go(u0, self.v[j], z_safe, "luft")
+                        go(u0, self.v[j], z, "tauchen")
+                        first = False
+                    else:
+                        go(u0, self.v[j], z, "quer")
+                    go(u1, self.v[j], z, "fraesen")
+                flip = not flip
+            if len(bnd) > 2:
+                B = bnd[::max(1, int(round(0.4 / self.g)))]
+                bu, bv = self.u[B[:, 0]], self.v[B[:, 1]]
+                go(pts[-1][0] if pts else bu[0], pts[-1][1] if pts else bv[0], z_safe, "luft")
+                go(bu[0], bv[0], z_safe, "luft")
+                go(bu[0], bv[0], z, "tauchen")
+                for a, b in zip(bu[1:], bv[1:]):
+                    go(a, b, z, "kontur")
+                go(bu[0], bv[0], z, "kontur")
+        go(pts[-1][0], pts[-1][1], z_safe, "luft")
+        self.path_pts = pts
+        P = np.array([(u, v, z) for u, v, z, _ in pts], float)
+        P3 = np.array([self.to3d(*p) for p in P])
+        dense, self.block = _dense_poses(np.hstack([P3, P]), max(0.3 * Rt, 0.15))
+        self.poses = dense
+        self.tips = dense[:, :3]
+        self.axes = np.repeat(self.n[None, :], len(dense), axis=0)
+        self.reset()
+        L = float(np.linalg.norm(np.diff(P3, axis=0), axis=1).sum())
+        return dict(layers=len(zs), blocks=len(pts), length=L, depth=self.Hmax)
+
+    def _cut(self, j):
+        u, v, z = self.poses[j, 3:6]
+        if z >= self.Hmax:
+            return False
+        i = np.nonzero(np.abs(self.u - u) <= self.Rt + 1e-9)[0]
+        k = np.nonzero(np.abs(self.v - v) <= self.Rt + 1e-9)[0]
+        if not len(i) or not len(k):
+            return False
+        si, sk = slice(i[0], i[-1] + 1), slice(k[0], k[-1] + 1)
+        m = ((self.UU[si, sk] - u) ** 2 + (self.VV[si, sk] - v) ** 2 <= self.Rt ** 2 + 1e-9) & self.mask[si, sk]
+        upd = m & (self.top[si, sk] > z + 1e-9)
+        if not upd.any():
+            return False
+        self.top[si, sk][upd] = max(z, 0.0)
+        return True
+
+    def mesh(self):
+        done = (self.top <= 1e-3) | ~self.mask
+        z = np.where(done, 0.01, self.top)
+        V = (self.mo[None, None, :] + self.UU[..., None] * self.md[None, None, :]
+             + self.VV[..., None] * self.vdir[None, None, :] + (self.h + z)[..., None] * self.n[None, None, :])
+        nu, nv = z.shape
+        idx = np.arange(nu * nv).reshape(nu, nv)
+        q00, q10, q01, q11 = idx[:-1, :-1], idx[1:, :-1], idx[:-1, 1:], idx[1:, 1:]
+        dn, mk = done.ravel(), self.mask.ravel()
+        keep = ~(dn[q00] & dn[q10] & dn[q01] & dn[q11]) & (mk[q00] & mk[q10] & mk[q01] & mk[q11])
+        q00, q10, q01, q11 = q00[keep], q10[keep], q01[keep], q11[keep]
+        F = np.vstack([np.stack([q00, q10, q11], 1), np.stack([q00, q11, q01], 1)])
+        return V.reshape(-1, 3), F
+
+    def progress_text(self):
+        return 100.0 * (1.0 - self.top[self.mask].sum() / max(self.top0[self.mask].sum(), 1e-9))
+
+
+def plane_floor_face(model, feat):
+    """Grundfläche eines Fräsmerkmals (Planfläche parallel zur Achse, am nächsten zur Achse)."""
+    mo, md = main_axis(model)
+    best = None
+    for i in feat["faces"]:
+        f = model.faces[i]
+        if not isinstance(f.surf, PlaneSurf) or abs(f.surf.n @ md) > 1e-3:
+            continue
+        cen = f.triangles.reshape(-1, 3).mean(0)
+        foot = mo + ((cen - mo) @ md) * md
+        nn = unit(f.surf.n - (f.surf.n @ md) * md)
+        if abs(unit(cen - foot) @ nn) < 0.5:
+            continue                                   # Seitenwand, kein Grund
+        d = abs((cen - foot) @ nn)
+        if best is None or d < best[0]:
+            best = (d, i)
+    return None if best is None else best[1]

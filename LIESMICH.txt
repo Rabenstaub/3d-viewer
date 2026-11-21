@@ -12,6 +12,8 @@ Neu in 3.5.0
   Schritte wie bei CAM-Programmen, Summen gehen genau auf. Drehteil → Fräsen → „Nut am Mantel …“.
   Vorschau im Bild, Start vom anderen Ende, C-Drehsinn, absolut Z/C, CSV der Mittellinie.
   Neues Demo-Teil demo\Demo_Wendelnut.s3d.
+  ▶ Fräsen zeigen (Vorführung): Fräser fährt die Bahn ab, das Material verschwindet Stück für
+  Stück – für Ringtasche, Wendelnut sowie Nut, Schlüsselfläche und Abflachung (Drehteil → Fräsen).
 
 Neu in 3.4.0
 ------------

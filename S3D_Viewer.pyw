@@ -2284,25 +2284,46 @@ class MainWindow(QtWidgets.QMainWindow):
                             getattr(self, "dock_views", None)) if d is not None]
 
     def _dock_of(self, w):
+        """Fenster, dessen Schrift mit Strg + Mausrad geändert wird: Seitenfenster oder eigener Dialog."""
+        start = w
         while w is not None:
             if isinstance(w, QtWidgets.QDockWidget) and w in self._docks():
                 return w
             w = w.parentWidget()
+        top = start.window() if start is not None else None
+        if isinstance(top, QtWidgets.QDialog) and top is not self and \
+                not isinstance(top, (QtWidgets.QMessageBox, QtWidgets.QFileDialog, QtWidgets.QInputDialog)):
+            return top
         return None
+
+    @staticmethod
+    def _zoom_key(target):
+        return "dock_zoom_" + (target.objectName() if isinstance(target, QtWidgets.QDockWidget)
+                               else type(target).__name__)
+
+    def _zoom_style(self, target):
+        try:
+            z = int(self.settings.value(self._zoom_key(target), 100))
+        except (TypeError, ValueError):
+            z = 100
+        target.setStyleSheet("" if z == 100 else f"QWidget {{ font-size:{self.font_pt * z / 100.0:.1f}pt; }}")
+        for t in target.findChildren(QtWidgets.QTableWidget):
+            QtCore.QTimer.singleShot(0, lambda t=t: (t.resizeColumnsToContents(),
+                                                     t.horizontalHeader().setStretchLastSection(True),
+                                                     t.verticalHeader().setDefaultSectionSize(
+                                                         int(t.fontMetrics().height() * 1.55) + 4)))
+        return z
 
     def _apply_dock_zoom(self, only=None):
         for d in self._docks():
-            if only is not None and d is not only:
-                continue
-            try:
-                z = int(self.settings.value(f"dock_zoom_{d.objectName()}", 100))
-            except (TypeError, ValueError):
-                z = 100
-            d.setStyleSheet("" if z == 100 else f"QWidget {{ font-size:{self.font_pt * z / 100.0:.1f}pt; }}")
+            if only is None or d is only:
+                self._zoom_style(d)
+        if only is not None and only not in self._docks():
+            self._zoom_style(only)
         QtCore.QTimer.singleShot(0, self._resize_tables)
 
     def step_dock_zoom(self, dock, direction):
-        key = f"dock_zoom_{dock.objectName()}"
+        key = self._zoom_key(dock)
         try:
             cur = int(self.settings.value(key, 100))
         except (TypeError, ValueError):
@@ -2354,6 +2375,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_lock_badge()
 
     def eventFilter(self, obj, ev):
+        if ev.type() == QtCore.QEvent.Type.Show and isinstance(obj, QtWidgets.QDialog) and obj.window() is obj \
+                and self._dock_of(obj) is obj:
+            self._zoom_style(obj)                       # gespeicherte Schriftgröße für diese Fenster-Art
         if ev.type() == QtCore.QEvent.Type.MouseButtonPress and ev.button() == Qt.MouseButton.MiddleButton \
                 and ev.modifiers() & Qt.KeyboardModifier.ControlModifier and isinstance(obj, QtWidgets.QWidget):
             dock = self._dock_of(obj)

@@ -1224,7 +1224,7 @@ class SimDialog(QtWidgets.QDialog):
         self.win, self.stock, self.plane = win, stock, plane
         self.setWindowTitle(f"Fräsen zeigen – {title}")
         self.setModal(False)
-        self.resize(470, 520 if plane else 150)
+        self.resize(500, 600 if plane else 150)
         lay = QtWidgets.QVBoxLayout(self)
         if plane:
             form = QtWidgets.QFormLayout()
@@ -1247,6 +1247,16 @@ class SimDialog(QtWidgets.QDialog):
             add("ae", "Bahnabstand (Zickzack)", round(0.6 * hint, 2), 0.05, 100.0)
             add("aw", "Aufmaß Wand (je Seite)", 0.0, 0.0, 5.0, True)
             add("af", "Aufmaß Grund", 0.0, 0.0, 5.0, True)
+            self.plunge = QtWidgets.QComboBox()
+            for t, k in (("pendelnd (schräg hin und her)", "pendel"), ("Helix (kreisförmig, wie Tornado-Fräsen)", "helix"),
+                         ("senkrecht (nur Fräser über Mitte schneidend)", "senkrecht")):
+                self.plunge.addItem(t, k)
+            i = self.plunge.findData(st.value("sim_plunge", "pendel"))
+            self.plunge.setCurrentIndex(max(i, 0))
+            form.addRow("Eintauchen", self.plunge)
+            add("ang", "Eintauchwinkel (°)", 3.0, 0.5, 45.0, True)
+            self.plunge.currentIndexChanged.connect(
+                lambda *_: self.sp["ang"].setEnabled(self.plunge.currentData() != "senkrecht"))
             self.fin = QtWidgets.QCheckBox("Schlichten mit 2. Fräser (erst Grund, dann Wand)")
             self.fin.setChecked(st.value("sim_fin", "false") in (True, "true"))
             form.addRow(self.fin)
@@ -1306,13 +1316,16 @@ class SimDialog(QtWidgets.QDialog):
     # ---------- Aufbau ----------
     def replan(self):
         v = {k: sb.value() for k, sb in self.sp.items()}
-        for k in ("ap", "aw", "af", "ap2"):
+        for k in ("ap", "aw", "af", "ap2", "ang"):
             self.win.settings.setValue(f"sim_{k}", v[k])
+        pl = self.plunge.currentData()
+        self.win.settings.setValue("sim_plunge", pl)
         fin = self.fin.isChecked()
         self.win.settings.setValue("sim_fin", fin)
         try:
             inf = self.stock.plan(v["D"] / 2, v["ap"], v["ae"], aw=v["aw"], af=v["af"],
-                                  finish=dict(Rt=v["D2"] / 2, ap=v["ap2"], ae=v["ae2"]) if fin else None)
+                                  finish=dict(Rt=v["D2"] / 2, ap=v["ap2"], ae=v["ae2"]) if fin else None,
+                                  plunge=pl, angle=v["ang"])
         except ValueError as ex:
             self.info.setText(f"<span style='color:#b00020'>{ex}</span>")
             return
@@ -1321,6 +1334,16 @@ class SimDialog(QtWidgets.QDialog):
                           + (f" · Schlichten Ø{fmt(v['D2'])}: Grund + Wand in {inf['finish_layers']} "
                              f"{'Schicht' if inf['finish_layers'] == 1 else 'Schichten'}" if fin else "")
                           + f"<br>{inf['blocks']} Sätze · Weg {fmt(inf['length'])} mm · Tiefe {fmt(inf['depth'])} mm")
+        if pl == "senkrecht":
+            self.plan_info += "<br>Eintauchen senkrecht – nur mit Fräser, der über Mitte schneidet!"
+        else:
+            n_h = inf.get("helix", 0)
+            txt = (f"Eintauchen {inf['ramps']}× mit {fmt(v['ang'], 1)}°"
+                   + (f": {n_h}× Helix, {inf['ramps'] - n_h}× pendelnd (kein Platz für den Kreis)"
+                      if pl == "helix" and n_h < inf["ramps"] else (" als Helix" if pl == "helix" else " pendelnd")))
+            if inf.get("fallback"):
+                txt += f" · <span style='color:#b00020'>{inf['fallback']}× senkrecht (zu wenig Platz zum Pendeln)</span>"
+            self.plan_info += "<br>" + txt
         if inf["rest_area"] > 4 * self.stock.g ** 2 and inf["rest_pct"] > 0.05:
             self.plan_info += (f"<br><span style='color:#b00020'><b>Achtung:</b> ca. {fmt(inf['rest_area'], 1)} mm² "
                                f"({fmt(inf['rest_pct'], 1)} %) Material bleibt stehen – der Fräser kommt nicht überall "

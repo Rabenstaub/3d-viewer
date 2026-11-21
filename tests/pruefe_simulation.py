@@ -1,5 +1,5 @@
 """Prüft die Fräs-Vorführung: Ringtasche, Wendelnut, Nut und Schlüsselfläche werden (fast) vollständig ausgeräumt."""
-import sys, os
+import sys, os, math
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 import s3d_core as c
@@ -45,6 +45,24 @@ for f in c.milling_features(m, w):
     if abs(rest.min() - 0.2) > 1e-6:
         fehler.append(f"{f['kind']}: Aufmaß Grund {rest.min():.3f} statt 0,2")
     pruefe(f"{f['kind']} +Schlichten", st, 99.5)
+# Eintauchen: pendelnd/Helix ohne senkrechtes Eintauchen, Winkel eingehalten
+for f in c.milling_features(m, w):
+    st = c.PlaneStock(m, f, c.plane_floor_face(m, f))
+    for pl in ("pendel", "helix"):
+        inf = st.plan(3.0, 1.0, 3.6, plunge=pl, angle=3.0)
+        P = st.path_pts
+        steil = 0.0
+        for p, q in zip(P[:-1], P[1:]):
+            if q[3] == "rampe":
+                h = math.hypot(q[0] - p[0], q[1] - p[1])
+                steil = max(steil, math.degrees(math.atan2(p[2] - q[2], max(h, 1e-9))))
+        ok = inf["fallback"] == 0 and not any(p[3] == "tauchen" for p in P) and steil < 3.0 + 0.05
+        print(f"{f['kind']:16s} {pl:7s} Rampen {inf['ramps']} (Helix {inf['helix']}) steilste {steil:.2f}°")
+        if not ok:
+            fehler.append(f"{f['kind']} {pl}: Eintauchen falsch")
+        st.cut_to(len(st.poses) - 1)
+        if st.progress_text() < 99.5:
+            fehler.append(f"{f['kind']} {pl}: nur {st.progress_text():.1f} %")
 # Zu großer Fräser: klare Meldung mit größtem möglichen Ø
 st = c.PlaneStock(m, c.milling_features(m, w)[0], c.plane_floor_face(m, c.milling_features(m, w)[0]))
 try:

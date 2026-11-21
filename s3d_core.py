@@ -3733,10 +3733,12 @@ class PlaneStock(_StockBase):
             self._wdist = dist
         return self.mask & (self._wdist >= Rc - 0.5 * self.g)
 
-    def plan(self, Rt, ap, ae, safety=2.0, aw=0.0, af=0.0, finish=None):
+    def plan(self, Rt, ap, ae, safety=2.0, aw=0.0, af=0.0, finish=None, plunge="pendel", angle=3.0):
         """Bahn erzeugen (Fräsermitte u, v, Höhe z über Grund, Werkzeug-Nr.).
         Schruppen mit Fräser Rt, Aufmaß aw an den Wänden und af am Grund; optional
-        finish=dict(Rt=…, ap=…, ae=…): Schlichten mit 2. Fräser – erst Grund (Zickzack), dann Wand (Kontur)."""
+        finish=dict(Rt=…, ap=…, ae=…): Schlichten mit 2. Fräser – erst Grund (Zickzack), dann Wand (Kontur).
+        plunge: „pendel“ (schräg hin und her auf der ersten Bahn), „helix“ (kreisförmig, wie Tornado-Fräsen),
+        „senkrecht“ (nur für Fräser, die über Mitte schneiden); angle = Eintauchwinkel in Grad."""
         allowed = self._allowed(Rt + aw)
         if not allowed.any():
             raise ValueError(f"Fräser Ø{fmt(2 * Rt)}{' mit Aufmaß ' + fmt(aw) if aw else ''} passt nicht in dieses "
@@ -3749,11 +3751,113 @@ class PlaneStock(_StockBase):
         def go(u, v, z, kind, t):
             pts.append((u, v, z, kind, t))
 
-        def approach(u, v, z, t):
+        tanA = math.tan(math.radians(min(max(angle, 0.5), 45.0)))
+        state = dict(z_prev=self.Hmax, Rc=Rt, alw=allowed, ramps=0, fallback=0)
+
+        def ok_cell(u, v):
+            i = int(round((u - self.u[0]) / self.g))
+            j = int(round((v - self.v[0]) / self.g))
+            return 0 <= i < len(self.u) and 0 <= j < len(self.v) and bool(state["alw"][i, j])
+
+        def ramp_pendel(path, z0, z1, t):
+            P = np.asarray(path, float)
+            seg = np.linalg.norm(np.diff(P, axis=0), axis=1) if len(P) > 1 else np.zeros(0)
+            Ltot = float(seg.sum())
+            if Ltot < 0.5:
+                return False
+            Lp = min(Ltot, max(4.0 * state["Rc"], 3.0))
+            cum = np.concatenate([[0.0], np.cumsum(seg)])
+            k = int(np.searchsorted(cum, Lp))
+            S = list(P[:k]) if k > 0 else [P[0]]
+            if k < len(P):
+                f = (Lp - cum[k - 1]) / max(seg[k - 1], 1e-12)
+                S.append(P[k - 1] + f * (P[k] - P[k - 1]))
+            S = np.array(S)
+            sc = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(S, axis=0), axis=1))])
+            n = max(2, int(math.ceil((z0 - z1) / (Lp * tanA) - 1e-9)))
+            n += n % 2                                  # gerade Anzahl: endet wieder am Einstiegspunkt
+            dz = (z0 - z1) / n
+            for i in range(n):
+                fw = (i % 2 == 0)
+                pts_leg = S if fw else S[::-1]
+                d_leg = sc if fw else (sc[-1] - sc[::-1])
+                for q, d in zip(pts_leg[1:], d_leg[1:]):
+                    go(q[0], q[1], z0 - i * dz - dz * d / sc[-1], "rampe", t)
+            return True
+
+        def ramp_helix(u, v, z0, z1, t, path):
+            """Kreisförmig eintauchen (Prinzip Tornado-Fräsen). Kreis liegt in Bahnrichtung neben dem Einstieg,
+            beginnt und endet am Einstiegspunkt."""
+            P = np.asarray(path, float)
+            d = P[1] - P[0] if len(P) > 1 else np.array([1.0, 0.0])
+            if np.linalg.norm(d) < 1e-9:
+                return False
+            d = d / np.linalg.norm(d)
+            a0 = math.atan2(-d[1], -d[0])
+            ang = np.linspace(0, 2 * np.pi, 25)
+            fits = lambda cu, cv, rh: all(ok_cell(cu + rh * math.cos(a), cv + rh * math.sin(a)) for a in ang)
+            inner = None
+            for fr in (0.8, 0.6, 0.45, 0.3):
+                rh = fr * state["Rc"]
+                cu, cv = u + rh * d[0], v + rh * d[1]
+                if fits(cu, cv, rh):
+                    break
+            else:
+                # kein Platz direkt am Einstieg: Kreis an der nächsten Stelle, wo er Platz hat, dann auf Tiefe hinfahren
+                alw = state["alw"]
+                for fr in (0.6, 0.45, 0.3):
+                    rh = fr * state["Rc"]
+                    cand = alw & (self._wdist >= state["Rc"] + rh + self.g)
+                    if not cand.any():
+                        continue
+                    du, dv = self.UU[cand] - u, self.VV[cand] - v
+                    order = np.argsort(du * du + dv * dv)[:40]
+                    for o in order:
+                        cu, cv = float(self.UU[cand][o]), float(self.VV[cand][o])
+                        if fits(cu, cv, rh):
+                            inner = (cu, cv)
+                            break
+                    if inner:
+                        break
+                if inner is None:
+                    return False
+                cu, cv = inner
+                a0 = 0.0
+                go(cu + rh, cv, z0, "luft", t)
+            C = 2 * math.pi * rh
+            nrev = max(1, int(math.ceil((z0 - z1) / (C * tanA) - 1e-9)))
+            m = 24 * nrev
+            for k in range(1, m + 1):
+                a = a0 + 2 * math.pi * k / 24
+                go(cu + rh * math.cos(a), cv + rh * math.sin(a), z0 - (z0 - z1) * k / m, "rampe", t)
+            for k in range(1, 25):                         # eine Runde auf Tiefe, endet am Einstieg
+                a = a0 + 2 * math.pi * k / 24
+                go(cu + rh * math.cos(a), cv + rh * math.sin(a), z1, "rampe", t)
+            if inner is not None:
+                go(cu, cv, z1, "fraesen", t)
+                go(u, v, z1, "fraesen", t)
+            return True
+
+        def approach(u, v, z, t, path=None):
             if pts:
                 go(pts[-1][0], pts[-1][1], z_safe, "luft", t)
             go(u, v, z_safe, "luft", t)
-            go(u, v, z, "tauchen", t)
+            z0 = min(state["z_prev"] + 0.5, z_safe)
+            if plunge == "senkrecht" or z0 <= z + 1e-6:
+                go(u, v, z, "tauchen", t)
+                return
+            go(u, v, z0, "luft", t)
+            done = False
+            if plunge == "helix" and path is not None:
+                done = ramp_helix(u, v, z0, z, t, path)
+                state["helix"] = state.get("helix", 0) + int(done)
+            if not done and path is not None:
+                done = ramp_pendel(path, z0, z, t)
+            if not done:
+                state["fallback"] += 1
+                go(u, v, z, "tauchen", t)
+            else:
+                state["ramps"] += 1
 
         def zigzag(alw, z, ae, Rc, t, need_z):
             ae = min(ae, 1.8 * Rc)
@@ -3780,7 +3884,7 @@ class PlaneStock(_StockBase):
                 for r in runs:
                     u0, u1 = self.u[r[0]], self.u[r[-1]]
                     if first or abs(pts[-1][1] - self.v[j]) > ae * 1.6 + 1e-6 or len(runs) > 1:
-                        approach(u0, self.v[j], z, t)
+                        approach(u0, self.v[j], z, t, path=[(u0, self.v[j]), (u1, self.v[j])])
                         first = False
                     else:
                         go(u0, self.v[j], z, "quer", t)
@@ -3793,7 +3897,7 @@ class PlaneStock(_StockBase):
                 return
             B = bnd[::max(1, int(round(0.4 / self.g)))]
             bu, bv = self.u[B[:, 0]], self.v[B[:, 1]]
-            approach(bu[0], bv[0], z, t)
+            approach(bu[0], bv[0], z, t, path=np.column_stack([np.r_[bu, bu[0]], np.r_[bv, bv[0]]]))
             for a, b in zip(bu[1:], bv[1:]):
                 go(a, b, z, "kontur", t)
             go(bu[0], bv[0], z, "kontur", t)
@@ -3809,6 +3913,7 @@ class PlaneStock(_StockBase):
         for z in zs:
             zigzag(allowed, z, ae, Rt, 0, z)
             contour(allowed, z, 0)
+            state["z_prev"] = z
         radii = [Rt]
         info = dict(layers=len(zs), finish_layers=0)
         if finish:
@@ -3819,12 +3924,15 @@ class PlaneStock(_StockBase):
                                  f"Größter Fräser hier: ca. Ø{fmt(self.max_tool_d(), 1)}.")
             go(pts[-1][0], pts[-1][1], z_safe, "luft", 0)
             go(pts[-1][0], pts[-1][1], z_safe, "wechsel", 1)
+            state.update(Rc=R2, alw=alw2, z_prev=af)
             if af > 1e-9:
                 zigzag(alw2, 0.0, finish.get("ae", 1.2 * R2), R2, 1, -1.0)
             ap2 = finish.get("ap") or self.Hmax
             zs2 = levels(ap2, 0.0)
+            state["z_prev"] = self.Hmax
             for z in zs2:
                 contour(alw2, z, 1)
+                state["z_prev"] = z
             radii.append(R2)
             info["finish_layers"] = len(zs2)
         go(pts[-1][0], pts[-1][1], z_safe, "luft", pts[-1][4])
@@ -3840,7 +3948,8 @@ class PlaneStock(_StockBase):
         self.axes = np.repeat(self.n[None, :], len(dense), axis=0)
         self.reset()
         Lp = float(np.linalg.norm(np.diff(P3, axis=0), axis=1).sum())
-        info.update(blocks=len(pts), length=Lp, depth=self.Hmax)
+        info.update(blocks=len(pts), length=Lp, depth=self.Hmax, ramps=state["ramps"], fallback=state["fallback"],
+                    helix=state.get("helix", 0))
         # Probelauf: was bleibt ungewollt stehen (ohne das absichtliche Aufmaß)?
         self.cut_to(len(self.poses) - 1)
         z_ok = (0.0 if finish else af) + 0.02

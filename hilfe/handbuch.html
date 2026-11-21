@@ -55,6 +55,7 @@ rechts die Analyse (Messen, Nullpunkt, Bohrungen, Gewinde, Drehteil).</p>
 <tr><td>Verschieben</td><td>rechte Maustaste ziehen</td></tr>
 <tr><td>Zoomen</td><td>Mausrad (mit <kbd>Umschalt</kbd> feiner, mit <kbd>Strg</kbd> zum Mauszeiger) oder mittlere Maustaste ziehen</td></tr>
 <tr><td>Um die Längsachse drehen</td><td><kbd>Alt</kbd> + Mausrad (5° je Raste)</td></tr>
+<tr><td>Punkte ein/aus (rote Punkte, blaue Kreismittelpunkte)</td><td><kbd>U</kbd> oder Knopf „Punkte“</td></tr>
 <tr><td>Bedienoberfläche größer/kleiner</td><td><kbd>AltGr</kbd> + Mausrad</td></tr>
 <tr><td>Schrift nur im Fenster unter der Maus größer/kleiner (Analyse, Daten, Detailansichten, „Fräsen zeigen“, Ringtasche, Wendelnut, Optionen …)</td><td><kbd>Strg</kbd> + Mausrad · zurück auf 100 %: <kbd>Strg</kbd> + Mausrad-Klick</td></tr>
 <tr><td>Drehpunkt setzen</td><td>Doppelklick auf das Teil</td></tr>
@@ -232,6 +233,15 @@ Bohrungstabelle: Bezeichnung (z. B. M6×1), <b>Gewindetiefe</b>, Kernloch-Ø, <b
 <tr><td><b>Abflachung</b> (einzelne Fläche)</td><td>Tiefe ab Ø, Abstand Boden ↔ Mitte, Z, Länge, C</td></tr>
 </table>
 <p>C° ist die Richtung, aus der das Werkzeug auf den Boden schaut. Zeile anklicken = Flächen im Bild markiert.</p>
+<h3>Punkte und Kreismittelpunkte</h3>
+<p>Der Knopf <b>„Punkte“</b> (Taste <kbd>U</kbd>) blendet alle anklickbaren Punkte ein oder aus – unabhängig von
+„Annotationen“ (Gewinde). <b style="color:#b00020">Rot</b>: Bohrungseintritt und Nut-Kontur P1 … ·
+<b style="color:#1a4fb8">Blau</b>: Kreismittelpunkte – die Bogenmittelpunkte der Nuten (am Nutgrund) und die Mittelpunkte der
+Bohrungskreise. Ausgeblendete Punkte lassen sich nicht anklicken; beim Markieren des Nutgrunds erscheinen dann keine P1 … .</p>
+<p><b>Messen mit Mittelpunkten:</b> blauen Punkt anklicken, mit <b>Strg</b> die Stirnfläche oder einen zweiten Mittelpunkt
+dazu – rechts steht der Abstand (Punkt–Ebene bzw. Punkt–Punkt mit dX/dY/dZ im aktuellen Nullpunkt).
+Beispiel Passfedernut 12×28 ab Z0: Stirn ↔ 1. Mittelpunkt 12 mm, Mittelpunkt ↔ Mittelpunkt 16 mm.</p>
+
 <h3>Fräskontur einer Nut (Z/Y-Koordinaten)</h3>
 <p>Zum Programmieren der Nut als Kontur (z. B. in der ZY-Ebene mit Fräserradiuskorrektur) braucht man alle Übergangspunkte
 zwischen geraden Linien und Rundungen. Dafür gibt es drei Wege:</p>

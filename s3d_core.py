@@ -726,6 +726,8 @@ class Entity:
         if self.kind == "edge":
             e = self.model.edges[self.ref]
             return f"{e.id} ({EDGE_TYPES_DE.get(e.etype, e.etype)})"
+        if getattr(self, "_label", None):
+            return self._label
         return "Eckpunkt" if getattr(self, "is_vertex", False) else "Punkt"
 
     @property
@@ -2816,7 +2818,8 @@ def pocket_contour(model, wcs, feat):
             v0 = np.array([trans[i - 1][1] - c[1], zsign * (trans[i - 1][0] - c[0])])
             vm = np.array([mid[1] - c[1], zsign * (mid[0] - c[0])])
             cr = v0[0] * vm[1] - v0[1] * vm[0]
-            r.update(r=e["r"], cz=z_of(mo + c[0] * md), cy=float(c[1]), g="G3" if cr > 0 else "G2")
+            r.update(r=e["r"], cz=z_of(mo + c[0] * md), cy=float(c[1]), g="G3" if cr > 0 else "G2",
+                     c3=mo + c[0] * md + float(c[1]) * ey + h * eo)       # Bogenmittelpunkt am Nutgrund
         rows.append(r)
     return dict(points=points, rows=rows, h=h, c=feat["c"], width=feat.get("width"), depth=feat["depth"],
                 dia=feat["dia"], eo=eo, ey=ey)
@@ -2854,6 +2857,46 @@ def pocket_points_3d(model, wcs):
         if pc:
             for i, p in enumerate(pc["points"][:-1]):
                 out.append((p["p3"], k, i))
+    return out
+
+
+def circle_centers_3d(model, wcs):
+    """Kreismittelpunkte zum Anklicken und Messen: Bogenmittelpunkte der Nuten (am Nutgrund) und Mittelpunkte von
+    Kreiskanten, die nicht auf der Drehachse liegen (Bohrungen). Ergebnis: [(Punkt 3D, Beschreibung)]."""
+    out = []
+
+    def add(p, txt):
+        p = np.asarray(p, float)
+        for q, _ in out:
+            if np.linalg.norm(q - p) < 1e-3:
+                return
+        out.append((p, txt))
+    try:
+        feats = milling_features(model, wcs)
+    except Exception:
+        feats = []
+    for f in feats:
+        if f["kind"] != "Nut":
+            continue
+        try:
+            pc = pocket_contour(model, wcs, f)
+        except Exception:
+            pc = None
+        for r in (pc or {}).get("rows", []):
+            if r.get("c3") is not None:
+                add(r["c3"], f"Kreismittelpunkt Nut R{fmt(r['r'])} (am Nutgrund)")
+    try:
+        mo, md = main_axis(model)
+    except Exception:
+        return out
+    for e in model.edges.values():
+        if e.etype != "CIRCLE" or e.center is None or e.radius is None:
+            continue
+        c = np.asarray(e.center, float)
+        off = np.linalg.norm((c - mo) - ((c - mo) @ md) * md)
+        if off < 1e-3 and abs(abs(float(unit(e.normal) @ md)) - 1) < 1e-6:
+            continue                                     # Drehkante auf der Achse
+        add(c, f"Kreismittelpunkt Ø{fmt(2 * e.radius)}")
     return out
 
 

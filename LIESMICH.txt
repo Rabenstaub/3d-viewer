@@ -22,6 +22,8 @@ Neu in 3.5.0
   Strg + Mausrad über einem Fenster (Analyse, Daten, „Fräsen zeigen“, Ringtasche …): Schrift nur dort größer/kleiner
   (wird gespeichert, Strg + Mausrad-Klick = 100 %).
   Seitenfenster lassen sich beliebig klein ziehen (auch unten angedockt) – der Inhalt wird dann gescrollt.
+  Knopf „Punkte“ (Taste U): rote Punkte und Kreismittelpunkte ein/aus, unabhängig von den Annotationen.
+  Blaue Kreismittelpunkte (Nutbögen, Bohrungen) anklickbar – Abstand zur Stirn oder von Mitte zu Mitte messen.
 
 Neu in 3.4.0
 ------------

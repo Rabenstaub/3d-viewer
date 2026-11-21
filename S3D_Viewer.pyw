@@ -2045,6 +2045,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.a_wcs = reg("wcs", "Koordinatensystem", self.update_display, "K", checkable=True, checked=True, tb=tb)
         self.a_annot = reg("annot", "Annotationen", self._build_annotations, "O", checkable=True,
                            checked=True, tb=tb, tip="Annotationen (Gewinde) anzeigen")
+        self.a_points = reg("points", "Punkte", self._points_toggled, "U", checkable=True, checked=True, tb=tb,
+                            tip="Rote Punkte (Bohrungseintritt, Nut-Kontur P1 …) und blaue Kreismittelpunkte anzeigen "
+                                "und anklickbar machen")
         self.a_pattern = reg("pattern", "Bohrbild", self._build_pattern_items, "Ctrl+B", checkable=True, tb=tb,
                              tip="Lochkreise und Winkel aller Bohrungen außerhalb des Bauteils")
         self.a_persp = reg("persp", "Perspektive", self.on_perspective, "P", checkable=True, tb=tb,
@@ -2568,6 +2571,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.pocket_pts = []
         if self.pocket_pts:
             self.vertices = np.vstack([self.vertices.reshape(-1, 3)] + [p[None, :] for p, *_ in self.pocket_pts])
+        # Kreismittelpunkte (Nutbögen, Bohrungen) – anklickbar, zum Messen
+        self.center_pts = []
+        if self.model is not None:
+            try:
+                self.center_pts = core.circle_centers_3d(self.model, self.wcs)
+            except Exception:
+                self.center_pts = []
+        n_plain = len(self.vertices.reshape(-1, 3)) - len(self.entry_pts) - len(self.pocket_pts)
+        if self.center_pts:
+            self.vertices = np.vstack([self.vertices.reshape(-1, 3)] + [p[None, :] for p, _ in self.center_pts])
+        self.vertex_special = np.zeros(len(self.vertices), bool)
+        self.vertex_special[max(n_plain, 0):] = True
 
     def _freeform_edges_from_mesh(self, V, T, F):
         """Freiform-Kanten (z. B. Verschneidung Querbohrung/Mantel) haben in der Datei keine Punkte.
@@ -3804,6 +3819,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                        width=1.2, antialias=True, glOptions=GL_EDGES)
                 self.view.addItem(it)
                 self.annot_items.append(it)
+        if self.model is not None and self.a_points.isChecked():
             pts = [p for p, i in getattr(self, "entry_pts", [])
                    if self.annot_types.get("Eintritt", True) and (
                        not self.annot_types.get("only_selected", False)
@@ -3815,7 +3831,26 @@ class MainWindow(QtWidgets.QMainWindow):
                 it.setGLOptions(GL_ONTOP if self.a_glass.isChecked() else GL_EDGES)
                 self.view.addItem(it)
                 self.annot_items.append(it)
+            cps = [p for p, _ in getattr(self, "center_pts", [])]
+            if cps:
+                it = gl.GLScatterPlotItem(pos=np.array(cps), size=9, color=(0.10, 0.42, 0.95, 1.0), pxMode=True)
+                it.setGLOptions(GL_ONTOP if self.a_glass.isChecked() else GL_EDGES)
+                self.view.addItem(it)
+                self.annot_items.append(it)
         self._sync_callouts()
+
+    def _points_toggled(self, *_):
+        self._build_annotations()
+        if self.sel:
+            self._refresh_selection()
+        self.status.showMessage("Punkte " + ("eingeblendet" if self.a_points.isChecked() else
+                                             "ausgeblendet (rote Punkte und Kreismittelpunkte, Taste U)"))
+
+    def _center_at(self, p, tol=1e-4):
+        for q, txt in getattr(self, "center_pts", []):
+            if np.linalg.norm(q - np.asarray(p, float)) < tol:
+                return txt
+        return None
 
     def _entry_at(self, p, tol=1e-4):
         """Bohrungsindex, falls p ein Eintrittspunkt ist."""
@@ -4618,6 +4653,9 @@ class MainWindow(QtWidgets.QMainWindow):
         S, ok = self.view.to_screen(self.vertices)
         dist = np.linalg.norm(S - np.array([pos.x(), pos.y()]), axis=1)
         dist[~ok] = 1e9
+        sp = getattr(self, "vertex_special", None)
+        if sp is not None and len(sp) == len(dist) and not self.a_points.isChecked():
+            dist[sp] = 1e9                     # ausgeblendete Punkte sind nicht anklickbar
         cand = np.where(dist < radius_px)[0]
         if len(cand) == 0:
             return None
@@ -4678,6 +4716,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if vh is not None:
                 ent = core.Entity(self.model, "point", None, point=vh)
                 ent.is_vertex = True
+                if self._center_at(vh):
+                    ent._label = "Kreismittelpunkt"
                 pw = self.wcs.to_wcs(vh)
                 ei = self._entry_at(vh)
                 self.status.showMessage(self._entry_text(ei)[1] if ei is not None else
@@ -4713,6 +4753,8 @@ class MainWindow(QtWidgets.QMainWindow):
             ent = core.Entity(self.model, "point", None, point=vh)
             ent.is_vertex = True
             pw = self.wcs.to_wcs(vh)
+            if self._center_at(vh):
+                ent._label = "Kreismittelpunkt"
         elif eh is not None:
             ent = core.Entity(self.model, "edge", eh[0])
         elif fh is not None:
@@ -4794,7 +4836,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if vh is not None:
             it = gl.GLScatterPlotItem(pos=np.array([vh]), size=14, color=line_col, pxMode=True, glOptions=GL_ONTOP)
             pw = self.wcs.to_wcs(vh)
-            tip = f"Eckpunkt  X {fmt(pw[0])}  Y {fmt(pw[1])}  Z {fmt(pw[2])}"
+            tip = f"{self._center_at(vh) or 'Eckpunkt'}  X {fmt(pw[0])}  Y {fmt(pw[1])}  Z {fmt(pw[2])}"
         elif eh is not None:
             e = self.model.edges[eh[0]]
             pts = np.repeat(e.points, 2, axis=0)[1:-1]
@@ -5127,7 +5169,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 pw = self.wcs.to_wcs(e.point)
                 ei = self._entry_at(e.point)
                 pk = self._pocket_at(e.point)
-                if pk is not None and ei is None:
+                ct = self._center_at(e.point)
+                if ct is not None and ei is None and pk is None:
+                    self.sel_callouts = [self._callout(e.point, f"{ct}\nX {fmt(pw[0])}\nY {fmt(pw[1])}\nZ {fmt(pw[2])}",
+                                                       bg=self._qc("#ffe8f0ff"), fg=self._qc("#ff1a4fb8"))]
+                    self.status.showMessage(f"{ct}:  X {fmt(pw[0])}   Y {fmt(pw[1])}   Z {fmt(pw[2])}   "
+                                            "(mit Strg eine Fläche oder einen 2. Punkt dazu = Abstand)")
+                elif pk is not None and ei is None:
                     self._show_pocket(pk[0], highlight=pk[1])
                 elif ei is not None:
                     self._show_entry_overlay(ei)
@@ -5530,12 +5578,14 @@ class MainWindow(QtWidgets.QMainWindow):
                                    glOptions=GL_ONTOP)
             ln.setDepthValue(20)
             items.append(ln)
-        dots = gl.GLScatterPlotItem(pos=np.array(P), size=11, color=(0.86, 0.05, 0.05, 1.0), pxMode=True,
-                                    glOptions=GL_ONTOP)
-        dots.setDepthValue(22)
-        items.append(dots)
+        show_pts = self.a_points.isChecked() or highlight is not None
+        if show_pts:
+            dots = gl.GLScatterPlotItem(pos=np.array(P), size=11, color=(0.86, 0.05, 0.05, 1.0), pxMode=True,
+                                        glOptions=GL_ONTOP)
+            dots.setDepthValue(22)
+            items.append(dots)
         cs = []
-        for i, q in enumerate(P):
+        for i, q in enumerate(P if show_pts else []):
             txt = f"P{i + 1}"
             if highlight is not None and i == highlight:
                 p = pts[i]
